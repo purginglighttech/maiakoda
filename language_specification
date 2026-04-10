@@ -1,0 +1,1028 @@
+MaiaKoda Programming Language Specification
+
+Version 0.0.1 (Pre-alpha)
+
+Release Date: April 10, 2026
+Copyright © 2026 Purging Light Technologies and Contributors
+License: MIT License
+
+---
+
+Document Information
+
+Property Value
+Specification Version 0.0.1
+Language Version 0.0.1
+Status Pre-alpha
+Release Date 2026-04-10
+Copyright Holder Purging Light Technologies
+License MIT License
+Document ID PLT-MK-SPEC-2026-001
+
+---
+
+Table of Contents
+
+1. Introduction
+2. Lexical Structure
+3. Data Types
+4. Variables and Constants
+5. Expressions
+6. Statements
+7. Functions and Procedures
+8. Modules and Imports
+9. Memory Management
+10. Concurrency
+11. Safety Features
+12. FFI and Interoperability
+13. WebAssembly Support
+14. Objective-C Support
+15. Configuration (TOML)
+16. Documentation (Markdown)
+17. Compiler Implementation
+18. Versioning
+19. License
+
+---
+
+1. Introduction
+
+1.1 Overview
+
+MaiaKoda is a dual-nature programming language ecosystem consisting of two integrated languages:
+
+Language Type Purpose
+Maia Compiled systems language OS kernels, drivers, embedded systems, performance-critical code
+Koda Interpreted scripting language Embedded scripting, standalone shell, build automation, web development
+
+1.2 Design Philosophy
+
+1. Safety First - Multi-layer safety (borrow checking, reference capabilities, compile-time RC)
+2. No Garbage Collection - Deterministic performance, explicit memory management
+3. Zero-Cost Abstractions - No runtime overhead for language features
+4. Pascal Syntax - Clean, readable, no significant whitespace
+5. No Macros - No code obfuscation, comptime functions instead
+6. Self-Contained - No LLVM dependency, native backends for x86_64, ARM64, RISC-V, WASM
+7. TOML Configuration - All configurations use TOML format
+8. Markdown Documentation - All documentation uses GitHub Markdown
+
+1.3 Language Relationship
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         MaiaKoda                                  │
+├─────────────────────────────┬───────────────────────────────────┤
+│           Maia              │              Koda                  │
+│  (Compiled Systems Lang)    │    (Interpreted Scripting Lang)    │
+├─────────────────────────────┼───────────────────────────────────┤
+│ • No GC                     │ • Embedded (Lua-style)             │
+│ • Compile-time RC           │ • Standalone shell (Bash-style)    │
+│ • Borrow checker            │ • Async/await                      │
+│ • Reference capabilities    │ • Native templates                 │
+│ • Explicit allocators       │ • Built-in VCS                     │
+│ • Inline assembly           │ • Built-in ORM                     │
+│ • 4 backends (x86/ARM/RV/WASM)│ • Web framework (first-class)    │
+│ • FFI to 7 languages        │ • FFI via Maia                     │
+└─────────────────────────────┴───────────────────────────────────┘
+```
+
+---
+
+2. Lexical Structure
+
+2.1 Character Set
+
+MaiaKoda uses the Unicode character set. Source files are UTF-8 encoded.
+
+2.2 Tokens
+
+Tokens are classified as:
+
+· Identifiers
+· Keywords
+· Literals
+· Operators
+· Delimiters
+· Comments
+
+2.3 Keywords
+
+Category Keywords
+Types int8, int16, int32, int64, uint8, uint16, uint32, uint64, f32, f64, bool, string, array, struct, enum, type
+Memory own, ref, mut, rc, weak, consume, defer, alloc, free
+Concurrency actor, behavior, spawn, wait, channel, select, async, await
+Control if, elsif, else, for, while, loop, break, continue, return, match, try, catch, throw
+Visibility module, use, export, import, friend, package
+Safety safe, unsafe, defer
+FFI extern, @link, @export
+Other begin, end, procedure, function, var, const, type, as, null
+
+2.4 Identifiers
+
+Identifiers start with a letter or underscore, followed by letters, digits, or underscores.
+
+```pascal
+valid_identifier
+_validIdentifier
+identifier123
+camelCase
+PascalCase
+_snake_case
+```
+
+2.5 Literals
+
+Integer Literals
+
+```pascal
+42          // decimal
+0xFF        // hexadecimal
+0o755       // octal
+0b1010      // binary
+1_000_000   // with underscores
+```
+
+Floating-Point Literals
+
+```pascal
+3.14159
+0.001
+1e-10
+1.5e3
+```
+
+String Literals
+
+```pascal
+"Hello, World!"
+"Escaped \"quote\""
+"Multiline\nstring"
+
+"""
+Multiline
+string
+with formatting
+"""
+```
+
+Boolean Literals
+
+```pascal
+true
+false
+```
+
+Null Literal
+
+```pascal
+null
+```
+
+2.6 Comments
+
+```pascal
+// Single-line comment
+
+(* Multi-line
+   comment *)
+
+/// Documentation comment (for API docs)
+```
+
+2.7 Operators
+
+Type Operators
+Arithmetic +, -, *, /, %, // (integer division)
+Comparison ==, !=, <, >, <=, >=
+Logical and, or, not
+Bitwise &, |, ^, <<, >>, ~
+Assignment :=, +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+Pointer & (address-of), ^ (dereference)
+Range ..
+Pipeline | (Koda only)
+
+2.8 Delimiters
+
+```pascal
+( )   [ ]   { }   ,   ;   .   :   =   ->
+```
+
+---
+
+3. Data Types
+
+3.1 Primitive Types
+
+Type Size (bits) Range
+int8 8 -128 to 127
+int16 16 -32,768 to 32,767
+int32 32 -2,147,483,648 to 2,147,483,647
+int64 64 -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807
+uint8 8 0 to 255
+uint16 16 0 to 65,535
+uint32 32 0 to 4,294,967,295
+uint64 64 0 to 18,446,744,073,709,551,615
+f32 32 IEEE 754 single precision
+f64 64 IEEE 754 double precision
+bool 8 true or false
+string - UTF-8 encoded text
+usize architecture Pointer-sized unsigned integer
+isize architecture Pointer-sized signed integer
+
+3.2 Composite Types
+
+Arrays (Fixed Size)
+
+```pascal
+var arr: [5]int32 = [1, 2, 3, 4, 5]
+var matrix: [3][3]f64
+```
+
+Slices (Dynamic View)
+
+```pascal
+var slice: []int32 = arr[0..3]
+```
+
+Dynamic Arrays
+
+```pascal
+var dyn: array(int32) = array(int32).create()
+dyn.append(42)
+```
+
+Structs
+
+```pascal
+type Point = struct {
+    x: int32,
+    y: int32,
+}
+
+var p := Point { .x = 10, .y = 20 }
+```
+
+Enums
+
+```pascal
+type Color = enum {
+    Red,
+    Green,
+    Blue,
+}
+
+type Result = enum {
+    Ok = 200,
+    NotFound = 404,
+    Error = 500,
+}
+```
+
+3.3 Ownership Qualifiers
+
+Qualifier Meaning
+own Unique ownership, no aliasing
+ref Immutable borrow
+mut Mutable borrow
+rc Reference counted (shared ownership)
+weak Weak reference (doesn't affect RC count)
+
+3.4 Reference Capabilities (Pony-style)
+
+Capability Mutable Shareable Aliased Sendable
+iso ✅ ❌ ❌ ✅
+trn ✅ ❌ ✅ ❌
+ref ✅ ✅ ✅ ❌
+val ❌ ✅ ✅ ✅
+box ❌ ✅ ✅ ✅
+tag ❌ ✅ ✅ ✅
+
+3.5 Option Type (Null Safety)
+
+```pascal
+var maybe: ?int32 = null
+
+if maybe |value| then
+    writeln("Value: ", value)
+end
+
+var val := maybe ?? 0  // Default to 0 if null
+```
+
+---
+
+4. Variables and Constants
+
+4.1 Variable Declaration
+
+```pascal
+// Explicit type
+var x: int32 = 42
+
+// Type inference
+var y := 42
+
+// Multiple variables
+var a, b, c: int32 = 1, 2, 3
+
+// With ownership
+var unique: own string := "unique"
+var shared: rc string := "shared"
+```
+
+4.2 Constants
+
+```pascal
+const PI: f64 = 3.14159265359
+const MAX_SIZE: usize = 1024
+const NAME := "Maia"
+```
+
+4.3 Deferred Initialization
+
+```pascal
+var x: int32
+x = 42
+```
+
+---
+
+5. Expressions
+
+5.1 Primary Expressions
+
+```pascal
+literal
+identifier
+( expression )
+```
+
+5.2 Arithmetic Expressions
+
+```pascal
+a + b
+a - b
+a * b
+a / b
+a % b
+a // b  // integer division
+```
+
+5.3 Comparison Expressions
+
+```pascal
+a == b
+a != b
+a < b
+a > b
+a <= b
+a >= b
+```
+
+5.4 Logical Expressions
+
+```pascal
+a and b
+a or b
+not a
+```
+
+5.5 Bitwise Expressions
+
+```pascal
+a & b   // AND
+a | b   // OR
+a ^ b   // XOR
+~a      // NOT
+a << b  // left shift
+a >> b  // right shift
+```
+
+5.6 Type Conversion
+
+```pascal
+value as target_type
+```
+
+5.7 Range Expression
+
+```pascal
+0..9        // inclusive range
+0..<10      // exclusive end
+```
+
+---
+
+6. Statements
+
+6.1 Block Statement
+
+```pascal
+begin
+    statement1
+    statement2
+end
+```
+
+6.2 Assignment
+
+```pascal
+variable := expression
+variable += expression
+variable -= expression
+variable *= expression
+variable /= expression
+```
+
+6.3 If Statement
+
+```pascal
+if condition then
+    statements
+elsif condition then
+    statements
+else
+    statements
+end
+```
+
+6.4 While Loop
+
+```pascal
+while condition do
+    statements
+end
+```
+
+6.5 For Loop
+
+```pascal
+// Range loop
+for i in 0..9 do
+    statements
+end
+
+// Collection loop
+for item in collection do
+    statements
+end
+
+// Index-value loop
+for i, item in collection do
+    statements
+end
+```
+
+6.6 Loop with Break/Continue
+
+```pascal
+loop
+    if condition then break end
+    if skip then continue end
+end
+```
+
+6.7 Match Statement
+
+```pascal
+match value {
+    0 => writeln("zero"),
+    1 => writeln("one"),
+    2..9 => writeln("digit"),
+    else => writeln("other")
+}
+```
+
+6.8 Defer Statement
+
+```pascal
+var file := File.open("data.txt")
+defer file.close()
+```
+
+6.9 Return Statement
+
+```pascal
+return
+return expression
+```
+
+---
+
+7. Functions and Procedures
+
+7.1 Function Declaration
+
+```pascal
+function add(a: int32, b: int32): int32
+begin
+    return a + b
+end
+```
+
+7.2 Procedure Declaration
+
+```pascal
+procedure greet(name: string)
+begin
+    writeln("Hello, ", name)
+end
+```
+
+7.3 Generic Functions
+
+```pascal
+function identity<T>(value: T): T
+begin
+    return value
+end
+```
+
+7.4 Comptime Functions
+
+```pascal
+@comptime
+function factorial(n: int32): int32
+begin
+    var result: int32 := 1
+    for i in 2..n do
+        result *= i
+    end
+    return result
+end
+
+const FACT_10 := factorial(10)  // Computed at compile time
+```
+
+7.5 Async Functions (Maia)
+
+```pascal
+async function fetch_data(url: string): string
+begin
+    var response := await http.get(url)
+    return response.body
+end
+```
+
+---
+
+8. Modules and Imports
+
+8.1 Module Declaration
+
+```pascal
+module Math;
+
+export function add(a, b: int32): int32
+begin
+    return a + b
+end
+
+var _internal: int32  // Not exported
+```
+
+8.2 Import Statement
+
+```pascal
+use Math
+use Math.{add, PI}
+use Math as M
+use Math.*
+```
+
+8.3 Export Levels
+
+```pascal
+export var public: int32
+export(module) var module_api: int32
+package var package_api: int32
+var _private: int32
+const _FILE_ONLY: int32 = 42
+```
+
+---
+
+9. Memory Management
+
+9.1 Ownership System
+
+```pascal
+var a: own string := "hello"
+var b: ref string := &a   // borrow
+var c: mut string := &mut a  // mutable borrow
+var d: own string := consume a  // move
+// a is now invalid
+```
+
+9.2 Compile-Time Reference Counting
+
+```pascal
+var a: rc string := "shared"   // refcount = 1
+var b: rc string := a           // refcount = 2
+var c: rc string := a           // refcount = 3
+var weak: weak string := a      // weak reference
+```
+
+9.3 Explicit Allocators
+
+```pascal
+var arena := Arena.init(alloc)
+var data := arena.alloc(u8, 1024)
+defer arena.deinit()
+```
+
+9.4 Defer Statement
+
+```pascal
+var file := File.open("data.txt")
+defer file.close()
+```
+
+---
+
+10. Concurrency
+
+10.1 Actors
+
+```pascal
+actor Counter {
+    var _count: iso int32 := 0
+    
+    behavior increment()
+    begin
+        _count += 1
+    end
+    
+    function get(): val int32
+    begin
+        return _count as val
+    end
+}
+```
+
+10.2 Channels
+
+```pascal
+var ch: channel(int32) := channel.create(10)
+ch.send(42)
+var value := ch.recv()
+```
+
+10.3 Spawning
+
+```pascal
+var handle := spawn worker()
+wait(handle)
+```
+
+10.4 Async/Await (Maia)
+
+```pascal
+async function fetch(): string
+begin
+    return await http.get(url)
+end
+
+var data := await fetch()
+```
+
+---
+
+11. Safety Features
+
+11.1 Safety Levels
+
+Level Bounds Overflow Use-After-Free Leak Detection
+full ✅ ✅ ✅ ✅
+release ✅ ✅ ❌ ❌
+os ✅ ❌ ❌ ❌
+none ❌ ❌ ❌ ❌
+
+11.2 Safe/Unsafe Blocks
+
+```pascal
+safe do
+    arr[i] := 42  // Bounds checked
+end
+
+unsafe do
+    arr[i] := 42  // No checks
+    asm { mov eax, 42 }
+end
+```
+
+11.3 Option Type (Null Safety)
+
+```pascal
+var maybe: ?int32 := null
+
+if maybe |value| then
+    writeln(value)
+end
+```
+
+---
+
+12. FFI and Interoperability
+
+12.1 C FFI
+
+```pascal
+@link("c")
+extern function printf(format: *u8, ...): int32
+```
+
+12.2 C++ FFI
+
+```pascal
+extern "C++" type Vector3 = struct {
+    x: f32, y: f32, z: f32,
+    function length(&self): f32,
+}
+```
+
+12.3 Rust FFI
+
+```pascal
+extern "Rust" function rust_calculate(data: &[u8]) -> u64
+```
+
+12.4 Zig FFI
+
+```pascal
+extern "Zig" function zig_allocate(allocator: *opaque, size: usize): *u8
+```
+
+12.5 Pony FFI
+
+```pascal
+extern "Pony" function pony_create_counter(): tag PonyActor
+```
+
+12.6 Java FFI (JNI)
+
+```pascal
+extern "Java" function jni_find_class(env: *JNIEnv, name: *u8): JClass
+```
+
+12.7 Python FFI
+
+```pascal
+@link("python3")
+extern "Python" function PyImport_ImportModule(name: *u8): *PyObject
+```
+
+12.8 Objective-C FFI
+
+```pascal
+extern "ObjectiveC" function objc_msgSend(obj: *objc_object, sel: *objc_selector, ...): *objc_object
+```
+
+---
+
+13. WebAssembly Support
+
+13.1 WASM Target
+
+```bash
+maia build --target=wasm32 --output=app.wasm
+```
+
+13.2 WASM Attributes
+
+```pascal
+@wasm(import_module="env", import_name="log")
+function console_log(msg: *u8, len: usize)
+
+@wasm(export_name="main")
+procedure main() { ... }
+```
+
+13.3 WASI Support
+
+```pascal
+@wasm(wasi_preview2)
+function file_open(path: string, flags: u32): u32
+```
+
+---
+
+14. Objective-C Support
+
+14.1 Foundation Framework
+
+```pascal
+use ObjectiveC.Foundation
+
+var str := NSString.from_string("Hello")
+writeln(str.to_string())
+```
+
+14.2 AppKit/UIKit
+
+```pascal
+use ObjectiveC.AppKit
+
+var app := NSApplication.shared()
+app.run()
+```
+
+---
+
+15. Configuration (TOML)
+
+15.1 Project Configuration (maia.toml)
+
+```toml
+[project]
+name = "myproject"
+version = "0.0.1"
+authors = ["Purging Light Technologies"]
+license = "MIT"
+
+[project.dependencies]
+stdlib = { version = "^0.0.1" }
+
+[build]
+optimization = "debug"
+safety = "full"
+target = "x86_64-linux"
+```
+
+15.2 Package Manifest (package.toml)
+
+```toml
+[package]
+name = "stdlib"
+version = "0.0.1"
+
+[package.dependencies]
+core = { version = "^0.0.1" }
+```
+
+---
+
+16. Documentation (Markdown)
+
+16.1 Documentation Comments
+
+```pascal
+/// This function adds two numbers
+/// @param a First number
+/// @param b Second number
+/// @return Sum of a and b
+function add(a, b: int32): int32
+begin
+    return a + b
+end
+```
+
+16.2 Documentation Generation
+
+```bash
+maia docs --output=docs/
+```
+
+---
+
+17. Compiler Implementation
+
+17.1 Backends
+
+Architecture Status Output Format
+x86_64 ✅ ELF, Mach-O, PE
+ARM64 ✅ ELF, Mach-O, PE
+RISC-V ✅ ELF
+WebAssembly ✅ WASM
+
+17.2 Self-Hosting
+
+The Maia compiler is self-hosted:
+
+1. Stage 0: Zig compiler (bootstrap)
+2. Stage 1: Maia compiler (compiled by Zig)
+3. Stage 2: Maia compiler (compiled by Stage 1)
+
+17.3 Compilation Flags
+
+```bash
+maia build --target=x86_64-linux --release
+maia build --safety=full --optimize=aggressive
+maia build --emit-llvm --output=output.ll
+```
+
+---
+
+18. Versioning
+
+18.1 Version Scheme: major.minor.development
+
+Stage Minor Development Example
+Pre-alpha 0 1-99 0.0.1
+Alpha 1 1-99 0.1.5
+Beta 2 1-99 0.2.3
+RC 3 1-99 0.3.2
+Stable 4+ 0 1.0.0
+
+18.2 Compatibility
+
+· Major version change = Breaking changes
+· Minor version change = New features (backward compatible)
+· Development increment = Bug fixes, internal changes
+
+---
+
+19. License
+
+MIT License
+
+```
+Copyright (c) 2026 Purging Light Technologies and Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
+Appendix A: Hello World Examples
+
+Maia
+
+```pascal
+module Main;
+
+procedure main()
+begin
+    writeln("Hello, Maia!")
+end
+```
+
+Koda
+
+```pascal
+// hello.koda
+writeln("Hello, Koda!")
+```
+
+---
+
+Appendix B: Grammar (EBNF)
+
+```ebnf
+program         = { module | statement }
+module          = "module" identifier ";" { declaration }
+declaration     = variable_decl | constant_decl | function_decl | procedure_decl | type_decl
+
+variable_decl   = "var" identifier { "," identifier } ":" type [ "=" expression ]
+constant_decl   = "const" identifier ":" type "=" expression
+function_decl   = "function" identifier "(" [ parameters ] ")" ":" type [ ";" ] block
+procedure_decl  = "procedure" identifier "(" [ parameters ] ")" [ ";" ] block
+type_decl       = "type" identifier "=" type
+
+block           = "begin" { statement } "end"
+statement       = assignment | if_statement | for_statement | while_statement | match_statement
+                | return_statement | defer_statement | expression ";"
+
+expression      = primary { binary_op primary }
+primary         = literal | identifier | "(" expression ")" | function_call
+
+literal         = integer_literal | float_literal | string_literal | boolean_literal | null_literal
+```
+
+---
+
+Appendix C: Change Log
+
+Version Date Changes
+0.0.1 2026-04-10 Initial specification release
+
+---
+
+Appendix D: Contributors
+
+· Purging Light Technologies (Primary Developer)
+· Open Source Contributors
+
+---
+
+End of Specification
+
+---
+
+This document is the official specification for the MaiaKoda programming language version 0.0.1. For updates and errata, please visit https://github.com/purginglight/maiakoda
