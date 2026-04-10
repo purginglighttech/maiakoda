@@ -1,0 +1,1075 @@
+MaiaKoda Language Specification v0.0.1
+
+For AI-Assisted Development (Claude Consumption)
+
+---
+
+Document Metadata
+
+```yaml
+spec:
+  name: MaiaKoda
+  version: 0.0.1
+  status: pre-alpha
+  date: 2026-04-10
+  copyright: Purging Light Technologies
+  license: MIT
+  purpose: AI-assisted development specification
+```
+
+---
+
+Part 1: Language Overview
+
+1.1 Two-Language Architecture
+
+```yaml
+maia:
+  type: compiled
+  paradigm: multi
+  memory: no_gc + compile_time_rc
+  safety: borrow_checker + reference_capabilities
+  concurrency: actors + channels + async/await
+  targets: [x86_64, arm64, riscv64, wasm32]
+  ffi: [c, cpp, rust, zig, pony, java, python, objective_c]
+
+koda:
+  type: interpreted
+  paradigm: multi
+  modes: [embedded, standalone_shell]
+  features: [async_await, templates, vcs, orm, web_framework]
+  ffi: via_maia
+```
+
+1.2 Shared Syntax Principles
+
+```yaml
+syntax:
+  style: pascal
+  blocks: begin...end
+  comments: "//" and "(* *)"
+  case_sensitive: true
+  semicolons: required
+  whitespace: insignificant
+```
+
+---
+
+Part 2: Maia Specification
+
+2.1 Core Types
+
+```yaml
+primitive_types:
+  signed: [i8, i16, i32, i64, isize]
+  unsigned: [u8, u16, u32, u64, usize]
+  floats: [f32, f64]
+  other: [bool, string, char]
+
+composite_types:
+  array: "[N]T"
+  slice: "[]T"
+  dynamic_array: "array(T)"
+  struct: "struct { fields }"
+  enum: "enum { variants }"
+  option: "?T"
+```
+
+2.2 Ownership Qualifiers
+
+```yaml
+qualifiers:
+  own: unique_ownership, no_alias, moves_on_assign
+  ref: immutable_borrow, multiple_allowed
+  mut: mutable_borrow, exclusive
+  rc: reference_counted, shared_ownership
+  weak: weak_reference, no_count_increment
+```
+
+2.3 Reference Capabilities
+
+```yaml
+capabilities:
+  iso: {mutable: true, shareable: false, aliased: false, sendable: true}
+  trn: {mutable: true, shareable: false, aliased: true, sendable: false}
+  ref: {mutable: true, shareable: true, aliased: true, sendable: false}
+  val: {mutable: false, shareable: true, aliased: true, sendable: true}
+  box: {mutable: false, shareable: true, aliased: true, sendable: true}
+  tag: {mutable: false, shareable: true, aliased: true, sendable: true}
+```
+
+2.4 Grammar (Maia)
+
+```ebnf
+(* Core syntax *)
+program         = { module }
+module          = "module" ident ";" { declaration }
+
+declaration     = var_decl | const_decl | func_decl | proc_decl | type_decl
+
+var_decl        = "var" ident { "," ident } ":" type [ "=" expr ]
+const_decl      = "const" ident ":" type "=" expr
+func_decl       = [ "async" ] "function" ident "(" [ params ] ")" ":" type [ ";" ] block
+proc_decl       = [ "async" ] "procedure" ident "(" [ params ] ")" [ ";" ] block
+type_decl       = "type" ident "=" type
+
+block           = "begin" { statement } "end"
+
+statement       = assignment | if_stmt | for_stmt | while_stmt | match_stmt
+                | return_stmt | defer_stmt | expr ";"
+
+assignment      = ident [ "[" expr "]" ] assign_op expr
+assign_op       = ":=" | "+=" | "-=" | "*=" | "/=" | "%="
+
+if_stmt         = "if" expr "then" block { "elsif" expr "then" block } [ "else" block ] "end"
+
+for_stmt        = "for" ident "in" range "do" block "end"
+                | "for" ident "," ident "in" expr "do" block "end"
+
+while_stmt      = "while" expr "do" block "end"
+
+match_stmt      = "match" expr "{" { match_case } "}"
+match_case      = pattern "=>" block ","
+
+return_stmt     = "return" [ expr ]
+
+defer_stmt      = "defer" expr
+
+(* Ownership *)
+type            = primitive_type | composite_type | qualified_type
+qualified_type  = [ "own" | "ref" | "mut" | "rc" | "weak" ] type
+
+(* Concurrency *)
+actor_decl      = "actor" ident "{" { behavior_decl | field_decl } "}"
+behavior_decl   = "behavior" ident "(" [ params ] ")" block
+channel_decl    = "channel(" type ")"
+spawn_stmt      = "spawn" expr
+await_expr      = "await" expr
+
+(* Safety *)
+safe_block      = "safe" "do" block "end"
+unsafe_block    = "unsafe" "do" block "end"
+
+(* FFI *)
+extern_decl     = "extern" string_literal function_decl
+link_attr       = "@link(" string_literal [ "," "static:" bool ] ")"
+export_attr     = "@export(" string_literal [ "," "name:" string_literal ] ")"
+
+(* Comptime *)
+comptime_attr   = "@comptime"
+comptime_func   = "@comptime" function_decl
+comptime_if     = "if" "@comptime(" expr ")" then block "else" block "end"
+```
+
+2.5 Built-in Functions (Maia)
+
+```yaml
+memory:
+  alloc: "alloc(T, count) -> []T"
+  free: "free(ptr)"
+  create: "create(T) -> *T"
+  destroy: "destroy(ptr)"
+
+concurrency:
+  spawn: "spawn(async_fn) -> Task"
+  wait: "wait(task)"
+  channel_create: "channel(T, buffer_size) -> Channel(T)"
+
+io:
+  writeln: "writeln(args...)"
+  readln: "readln() -> string"
+  print: "print(args...)"
+
+type_info:
+  size_of: "size_of(T) -> usize"
+  align_of: "align_of(T) -> usize"
+  type_name: "type_name(T) -> string"
+  type_id: "type_id(T) -> u64"
+
+safety:
+  assert: "assert(condition, message?)"
+  unreachable: "unreachable()"
+  compile_error: "compile_error(message)"
+```
+
+---
+
+Part 3: Koda Specification
+
+3.1 Koda-Specific Features
+
+```yaml
+modes:
+  embedded: runs_inside_maia_vm
+  standalone: executed_by_koda_shell
+
+shell_features:
+  job_control: [fg, bg, jobs]
+  pipelines: "cmd1 | cmd2 | cmd3"
+  redirection: [>, >>, <, 2>, &>]
+  background: "cmd &"
+
+web_framework:
+  server: native_http_1_1_and_2
+  routing: pattern_matching_with_params
+  middleware: chainable_async
+  websocket: full_duplex
+  templates: builtin_engine
+  orm: postgres_mysql_sqlite
+  graphql: builtin_resolver
+```
+
+3.2 Koda Grammar
+
+```ebnf
+(* Koda extensions *)
+async_func      = "async" "function" ident "(" [ params ] ")" ":" type block
+await_expr      = "await" expr
+
+task_spawn      = "spawn" expr
+task_await      = "await" expr
+task_await_all  = "await_all(" expr ")"
+task_await_any  = "await_any(" expr ")"
+
+template        = "Template.create(" string_literal ")"
+template_render = template ".render(" table_literal ")"
+
+web_server      = "Web.Server.create(" [ config ] ")"
+web_route       = server ".get/post/put/delete(" string_literal "," handler ")"
+web_middleware  = "app.use(" middleware_fn ")"
+web_listen      = "app.listen(" port ")"
+
+vcs_operation   = "Git.clone(" url "," path ")"
+                | "repo.checkout(" ref ")"
+                | "repo.pull()"
+                | "repo.get_current_commit()"
+
+build_task      = "task(" string_literal "," [ depends: [string] ] "," fn ")"
+build_exec      = "exec(" cmd "," [ args ] ")"
+build_parallel  = "parallel {" { task_call } "}"
+```
+
+3.3 Koda Built-in Modules
+
+```yaml
+modules:
+  Koda.Async: [async, await, spawn, sleep, Task, await_all, await_any]
+  Koda.Template: [Template, render, include, extend, block, filter, function]
+  Koda.Web: [Server, Request, Response, Route, Middleware, WebSocket, SSE]
+  Koda.Web.Router: [Router, group, resource, param, validate]
+  Koda.Web.Auth: [JWT, OAuth, Session, Role, Permission]
+  Koda.Web.ORM: [Model, Query, Transaction, Migration]
+  Koda.Web.GraphQL: [Schema, Query, Mutation, Subscription, Resolver]
+  Koda.VCS: [Git, Hg, Svn, Repo, clone, pull, checkout, commit]
+  Koda.Build: [Task, exec, parallel, cache, container, matrix]
+  Koda.Config: [load, save, convert, parse, TOML, JSON, YAML, XML]
+  Koda.TOML: [parse, stringify, from_json, to_json]
+  Koda.JSON: [parse, stringify]
+  Koda.Shell: [exec, pipe, job, fg, bg, jobs, cd, pwd, ls, cat, grep]
+  Koda.FS: [read, write, open, close, stat, mkdir, rmdir, walk, watch]
+  Koda.Test: [test, assert, describe, it, before, after, mock, client]
+```
+
+---
+
+Part 4: FFI Specifications
+
+4.1 C FFI
+
+```yaml
+syntax: 'extern "C" function name(params): return_type'
+linking: '@link("library_name")'
+types: 
+  mapping: 
+    C_int: i32
+    C_char: u8
+    C_void: *opaque
+    C_string: *u8
+    C_struct: 'extern "C" struct { fields }'
+```
+
+4.2 C++ FFI
+
+```yaml
+syntax: 'extern "C++" type ClassName = struct { methods }'
+methods: 'function name(params): return_type'
+construction: 'ClassName.create(args) -> own ClassName'
+destruction: 'obj.destroy()'
+```
+
+4.3 Rust FFI
+
+```yaml
+syntax: 'extern "Rust" function name(params): return_type'
+ownership: 
+  Rust_String: own RustString
+  Rust_Vec: own RustVec(T)
+  slice: '&[T]' -> '[]T'
+```
+
+4.4 Zig FFI
+
+```yaml
+syntax: 'extern "Zig" function name(params): return_type'
+allocator: 'ZigAllocator.wrap(maia_allocator) -> *opaque'
+comptime: zig_comptime_functions_available
+```
+
+4.5 Pony FFI
+
+```yaml
+syntax: 'extern "Pony" function name(params): return_type'
+capabilities: 
+  iso -> own
+  ref -> ref
+  val -> val
+  tag -> tag
+actors: pony_actor_tag_reference
+```
+
+4.6 Java FFI (JNI)
+
+```yaml
+syntax: 'extern "Java" function name(params): return_type'
+jvm_init: 'JNI_CreateJavaVM(vm, env, args)'
+class_find: 'jni_find_class(env, name) -> JClass'
+method_call: 'jni_call_static_int(env, cls, method, args)'
+```
+
+4.7 Python FFI
+
+```yaml
+syntax: 'extern "Python" function name(params): return_type'
+python_init: 'Py_Initialize()'
+import: 'PyImport_ImportModule(name) -> *PyObject'
+call: 'PyObject_CallObject(obj, args) -> *PyObject'
+convert: 
+  PyLong -> i64
+  PyFloat -> f64
+  PyUnicode -> string
+  PyBytes -> []u8
+```
+
+4.8 Objective-C FFI
+
+```yaml
+syntax: 'extern "ObjectiveC" function name(params): return_type'
+runtime: 'objc_msgSend(obj, sel, args)'
+class: 'objc_getClass(name) -> *objc_class'
+selector: 'sel_registerName(name) -> *objc_selector'
+frameworks: [Foundation, AppKit, UIKit]
+```
+
+---
+
+Part 5: Configuration Specification
+
+5.1 TOML Schema (maia.toml)
+
+```yaml
+schema:
+  project:
+    required: [name, version]
+    optional: [authors, license, description, repository, documentation]
+  
+  project.dependencies:
+    type: table
+    pattern: "^[a-z][a-z0-9_-]*$"
+    properties:
+      version: string
+      source: enum: [crates, git, local, path]
+      git: string
+      branch: string
+      tag: string
+      path: string
+  
+  build:
+    optional: true
+    properties:
+      optimization: enum: [debug, release, size]
+      safety: enum: [full, release, os, none]
+      target: string
+      jobs: integer
+      verbose: boolean
+  
+  build.safety.checks:
+    properties:
+      bounds: boolean
+      overflow: boolean
+      division_zero: boolean
+      shift: boolean
+      enum_cast: boolean
+  
+  build.cache:
+    properties:
+      enabled: boolean
+      directory: string
+      remote: string
+      compress: boolean
+  
+  project.ci:
+    properties:
+      enabled: boolean
+      provider: enum: [github-actions, gitlab-ci, circle-ci]
+```
+
+5.2 Package Manifest (package.toml)
+
+```yaml
+schema:
+  package:
+    required: [name, version]
+    optional: [authors, license, edition, description, homepage, repository, documentation, keywords, categories]
+  
+  package.dependencies:
+    type: table
+    pattern: "^[a-z][a-z0-9_-]*$"
+    properties:
+      version: string
+      source: enum: [crates, git, local]
+      git: string
+      branch: string
+      tag: string
+      path: string
+  
+  package.target-dependencies:
+    properties:
+      windows: {dependencies: table}
+      linux: {dependencies: table}
+      macos: {dependencies: table}
+  
+  package.profiles:
+    properties:
+      debug: {optimization: enum, debug: boolean, safety: enum}
+      release: {optimization: enum, debug: boolean, safety: enum}
+      size: {optimization: enum, debug: boolean, safety: enum}
+  
+  package.test:
+    properties:
+      unit: {paths: [string]}
+      integration: {paths: [string]}
+      coverage: boolean
+      timeout: integer
+  
+  package.docs:
+    properties:
+      generate: boolean
+      theme: string
+      output: string
+      features: [string]
+      examples: boolean
+```
+
+---
+
+Part 6: Target Specifications
+
+6.1 Backends
+
+```yaml
+x86_64:
+  os: [linux, macos, windows, freebsd, openbsd]
+  features: [sse, avx, avx2, avx512]
+  output: [elf, mach_o, pe]
+  assembler: nasm_syntax
+
+arm64:
+  os: [linux, macos, windows, freebsd]
+  features: [neon, sve, crypto]
+  output: [elf, mach_o, pe]
+
+riscv64:
+  os: [linux]
+  extensions: [g, c, v]
+  output: [elf]
+
+wasm32:
+  features: [simd, threads, bulk_memory, reference_types]
+  output: [wasm]
+  wasi: preview2
+```
+
+6.2 Target Triples
+
+```yaml
+format: "<arch>-<vendor>-<os>-<abi>"
+
+examples:
+  - x86_64-unknown-linux-gnu
+  - x86_64-apple-darwin
+  - x86_64-pc-windows-msvc
+  - aarch64-unknown-linux-musl
+  - aarch64-apple-darwin
+  - riscv64gc-unknown-linux-gnu
+  - wasm32-unknown-unknown
+  - wasm32-wasi-preview2
+```
+
+---
+
+Part 7: Versioning Specification
+
+7.1 Version Format
+
+```yaml
+format: "major.minor.development"
+major: breaking_changes
+minor: 
+  0: pre_alpha
+  1: alpha
+  2: beta
+  3: release_candidate
+  4+: stable
+development: 
+  pre_alpha: 1-99
+  alpha: 1-99
+  beta: 1-99
+  rc: 1-99
+  stable: 0
+  patch: 1-99
+```
+
+7.2 Version Rules
+
+```yaml
+compatibility:
+  same_major: compatible
+  major_increase: breaking
+  minor_increase:
+    from_0_to_1: alpha
+    from_1_to_2: beta
+    from_2_to_3: rc
+    from_3_to_4: stable
+  development_increase: bug_fixes_only
+```
+
+---
+
+Part 8: Safety Specification
+
+8.1 Safety Levels
+
+```yaml
+full:
+  bounds: true
+  overflow: true
+  use_after_free: true
+  leak_detection: compile_time
+  null: true
+  shift: true
+  division_zero: true
+
+release:
+  bounds: true
+  overflow: true
+  use_after_free: false
+  leak_detection: none
+  null: true
+  shift: true
+  division_zero: true
+
+os:
+  bounds: true
+  overflow: false
+  use_after_free: false
+  leak_detection: none
+  null: false
+  shift: false
+  division_zero: false
+
+none:
+  bounds: false
+  overflow: false
+  use_after_free: false
+  leak_detection: none
+  null: false
+  shift: false
+  division_zero: false
+```
+
+8.2 Unsafe Operations
+
+```yaml
+unsafe_allowed:
+  - dereference_raw_pointer
+  - inline_assembly
+  - call_extern_function
+  - disable_bounds_checking
+  - disable_overflow_checking
+  - type_punning
+  - union_access
+  - mutable_static
+```
+
+---
+
+Part 9: Documentation Specification
+
+9.1 Documentation Comments
+
+```yaml
+syntax:
+  summary: "/// text"
+  param: "/// @param name description"
+  return: "/// @return description"
+  example: "/// @example\n/// ```pascal\n/// code\n/// ```"
+  see: "/// @see reference"
+  deprecated: "/// @deprecated reason"
+  since: "/// @since version"
+```
+
+9.2 Generated Documentation
+
+```yaml
+format: markdown
+structure:
+  - index.md
+  - api/
+    - module_name.md
+    - type_name.md
+    - function_name.md
+  - examples/
+    - example_name.md
+  - changelog.md
+```
+
+---
+
+Part 10: Tooling Specification
+
+10.1 Compiler Commands
+
+```yaml
+commands:
+  build: "maia build [options]"
+  test: "maia test [options]"
+  run: "maia run [file] [args]"
+  fmt: "maia fmt [files]"
+  lint: "maia lint [files]"
+  docs: "maia docs [options]"
+  init: "maia init [name]"
+  add: "maia add dependency [version]"
+  publish: "maia publish [options]"
+  version: "maia version [bump]"
+  config: "maia config [subcommand]"
+```
+
+10.2 Koda Commands
+
+```yaml
+commands:
+  shell: "koda [interactive]"
+  run: "koda run [script] [args]"
+  repl: "koda repl"
+  test: "koda test [files]"
+  fmt: "koda fmt [files]"
+  lint: "koda lint [files]"
+  serve: "koda serve [port]"
+```
+
+---
+
+Part 11: Code Examples for AI Training
+
+11.1 Maia Examples
+
+```pascal
+// Example 1: Hello World
+module Main;
+
+procedure main()
+begin
+    writeln("Hello, Maia!")
+end
+
+// Example 2: Ownership and Borrowing
+module Ownership;
+
+procedure example()
+begin
+    var a: own string := "hello"
+    var b: ref string := &a
+    var c: mut string := &mut a
+    
+    writeln(b)  // immutable borrow
+    c := "world"  // mutable borrow
+    // a is now "world"
+end
+
+// Example 3: Actor Concurrency
+actor Counter {
+    var _count: iso int32 := 0
+    
+    behavior increment()
+    begin
+        _count += 1
+    end
+    
+    function get(): val int32
+    begin
+        return _count as val
+    end
+}
+
+procedure main()
+begin
+    var c: tag Counter := Counter.create()
+    spawn c.increment()
+    spawn c.increment()
+    wait()
+    writeln(c.get())  // 2
+end
+
+// Example 4: Async/Await
+async function fetch(url: string): string
+begin
+    var resp := await http.get(url)
+    return resp.body
+end
+
+async procedure main()
+begin
+    var data := await fetch("https://api.example.com")
+    writeln(data)
+end
+
+// Example 5: FFI to C
+@link("c")
+extern function printf(format: *u8, ...): int32
+
+procedure main()
+begin
+    var msg := "Hello from Maia!\n"
+    printf(msg)
+end
+```
+
+11.2 Koda Examples
+
+```pascal
+// Example 1: Web Server
+import Koda.Web
+
+var app := Web.Server.create()
+
+app.get("/", |req| {
+    return "Hello, World!"
+})
+
+app.get("/users/:id", |req| {
+    var id := req.params.id
+    var user := db.find_user(id)
+    return user
+})
+
+app.listen(8080)
+
+// Example 2: Async Operations
+async function fetch_data(): string
+begin
+    var data := await http.get("https://api.example.com")
+    return data
+end
+
+async procedure main()
+begin
+    var results := await_all([
+        spawn fetch_data(),
+        spawn fetch_data(),
+    ])
+    
+    for result in results do
+        writeln(result)
+    end
+end
+
+// Example 3: VCS Operations
+import Koda.VCS
+
+var repo := Git.clone("https://github.com/user/repo", "./local")
+repo.checkout("main")
+var commit := repo.get_current_commit()
+repo.pull()
+
+// Example 4: Build Script
+task("compile", {
+    exec("maia", ["build", "--release"])
+})
+
+task("test", depends: ["compile"], {
+    exec("maia", ["test", "--verbose"])
+})
+
+task("all", depends: ["compile", "test"])
+
+// Example 5: Templates
+var tpl := Template.create("""
+    <html>
+    <head><title>{{ title }}</title></head>
+    <body>
+        <h1>Hello, {{ name }}!</h1>
+        <ul>
+        {% for item in items %}
+            <li>{{ item }}</li>
+        {% end %}
+        </ul>
+    </body>
+    </html>
+""")
+
+var output := tpl.render({
+    title = "Welcome",
+    name = "Koda",
+    items = ["Apple", "Banana", "Orange"],
+})
+```
+
+---
+
+Part 12: Implementation Guide for AI
+
+12.1 When Generating Maia Code
+
+```yaml
+rules:
+  - use_begin_end_blocks: true
+  - explicit_types_preferred: true
+  - defer_for_cleanup: true
+  - unsafe_blocks_for_assembly: true
+  - async_functions_for_io: true
+  - actors_for_concurrent_state: true
+  - use_ref_capabilities: [iso, val, tag]
+  - explicit_allocators: true
+  - safe_blocks_for_trusted_code: false
+```
+
+12.2 When Generating Koda Code
+
+```yaml
+rules:
+  - use_async_await_for_io: true
+  - templates_for_html: true
+  - vcs_operations_builtin: true
+  - web_server_first_class: true
+  - toml_for_config: true
+  - pipelines_for_shell: "cmd1 | cmd2"
+  - jobs_control_available: [fg, bg, jobs]
+```
+
+12.3 Error Messages to Generate
+
+```yaml
+maia_errors:
+  - "error: use of moved value 'variable'"
+  - "error: cannot borrow 'variable' as mutable because it is also borrowed as immutable"
+  - "error: index out of bounds: len = X, index = Y"
+  - "error: integer overflow"
+  - "error: cannot send 'ref' across actor boundary"
+
+koda_errors:
+  - "error: await used outside of async function"
+  - "error: template variable 'name' not found"
+  - "error: Git repository not found at path"
+  - "error: route parameter 'id' not defined"
+```
+
+---
+
+Part 13: File Extensions
+
+```yaml
+maia:
+  source: .maia
+  module: .maia
+  interface: .mai
+  object: .o
+  static_lib: .a
+  shared_lib: .so, .dylib, .dll
+
+koda:
+  script: .koda
+  module: .koda
+  build_script: build.koda
+
+config:
+  project: maia.toml
+  package: package.toml
+  build: .maia/build.toml
+  repo: .maia/repo.toml
+  user: .kodarc.toml
+
+documentation:
+  main: README.md
+  contributing: CONTRIBUTING.md
+  changelog: CHANGELOG.md
+  license: LICENSE
+```
+
+---
+
+Part 14: Complete BNF Grammar
+
+```ebnf
+(* Full MaiaKoda Grammar v0.0.1 *)
+
+(* Top Level *)
+program         = { module | koda_script }
+module          = "module" ident ";" { declaration }
+koda_script     = { statement }
+
+(* Declarations *)
+declaration     = var_decl | const_decl | func_decl | proc_decl | type_decl
+                | actor_decl | extern_decl
+
+var_decl        = "var" ident { "," ident } ":" type [ "=" expr ]
+const_decl      = "const" ident ":" type "=" expr
+func_decl       = [ "async" ] "function" ident "(" [ params ] ")" ":" type [ ";" ] block
+proc_decl       = [ "async" ] "procedure" ident "(" [ params ] ")" [ ";" ] block
+type_decl       = "type" ident "=" type
+
+(* Blocks *)
+block           = "begin" { statement } "end"
+
+(* Statements *)
+statement       = assignment | if_stmt | for_stmt | while_stmt | match_stmt
+                | return_stmt | defer_stmt | try_stmt | spawn_stmt
+                | safe_block | unsafe_block | expr ";"
+
+assignment      = lvalue assign_op expr
+assign_op       = ":=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+lvalue          = ident [ "[" expr "]" ] [ "." ident ]
+
+if_stmt         = "if" expr "then" block { "elsif" expr "then" block } [ "else" block ] "end"
+for_stmt        = "for" for_range "do" block "end"
+for_range       = ident "in" range_expr | ident "," ident "in" expr
+while_stmt      = "while" expr "do" block "end"
+match_stmt      = "match" expr "{" { match_case } "}"
+match_case      = pattern "=>" block ","
+
+return_stmt     = "return" [ expr ]
+defer_stmt      = "defer" expr
+try_stmt        = "try" block { "catch" [ pattern ] block } "end"
+spawn_stmt      = "spawn" expr
+
+safe_block      = "safe" "do" block "end"
+unsafe_block    = "unsafe" "do" block "end"
+
+(* Expressions *)
+expr            = logical_expr
+logical_expr    = compare_expr { ("and" | "or") compare_expr }
+compare_expr    = additive_expr { ("==" | "!=" | "<" | ">" | "<=" | ">=") additive_expr }
+additive_expr   = multiplicative_expr { ("+" | "-") multiplicative_expr }
+multiplicative_expr = unary_expr { ("*" | "/" | "%" | "//") unary_expr }
+unary_expr      = ["not" | "-" | "~" | "&" | "*"] primary_expr
+
+primary_expr    = literal | ident | "(" expr ")" | call_expr | subscript_expr
+                | member_expr | await_expr | range_expr | lambda_expr
+
+call_expr       = expr "(" [ expr { "," expr } ] ")"
+subscript_expr  = expr "[" expr "]"
+member_expr     = expr "." ident
+await_expr      = "await" expr
+range_expr      = expr ".." expr [ "<" ]
+lambda_expr     = "|" [ params ] "|" expr
+
+(* Types *)
+type            = primitive_type | composite_type | qualified_type | function_type
+primitive_type  = "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64"
+                | "f32" | "f64" | "bool" | "string" | "usize" | "isize"
+composite_type  = "[" expr "]" type | "[]" type | "array(" type ")"
+                | "struct" "{" { ident ":" type "," } "}"
+                | "enum" "{" { ident [ "=" expr ] "," } "}"
+                | "?" type
+qualified_type  = [ "own" | "ref" | "mut" | "rc" | "weak" ] type
+                | [ "iso" | "trn" | "val" | "box" | "tag" ] type
+function_type   = "function" "(" [ params ] ")" ":" type
+
+(* Patterns *)
+pattern         = literal | ident | "_" | "(" pattern { "," pattern } ")"
+                | ident ".." ident
+
+(* Parameters *)
+params          = param { "," param }
+param           = ident ":" type [ "=" expr ]
+
+(* Lexical *)
+ident           = letter { letter | digit | "_" }
+literal         = integer_literal | float_literal | string_literal | bool_literal | "null"
+integer_literal = digit { digit } [ "_" digit { digit } ]
+                | "0x" hex_digit { hex_digit }
+                | "0o" oct_digit { oct_digit }
+                | "0b" bin_digit { bin_digit }
+float_literal   = digit { digit } "." digit { digit } [ "e" [ "+" | "-" ] digit { digit } ]
+string_literal  = '"' { character } '"' | '"""' { character } '"""'
+bool_literal    = "true" | "false"
+
+letter          = "A".."Z" | "a".."z" | "_"
+digit           = "0".."9"
+hex_digit       = "0".."9" | "A".."F" | "a".."f"
+oct_digit       = "0".."7"
+bin_digit       = "0" | "1"
+```
+
+---
+
+Part 15: AI Instructions
+
+```yaml
+when_asked_to_generate_maia_code:
+  1. Use Pascal-style syntax with begin/end blocks
+  2. Declare modules at top: "module Name;"
+  3. Use explicit types with "var name: type = value"
+  4. Use "procedure" for no return, "function" for return
+  5. Use "own/ref/mut/rc/weak" for ownership
+  6. Use "iso/trn/ref/val/box/tag" for capabilities
+  7. Use "actor" for concurrent state, "behavior" for actor methods
+  8. Use "async/await" for I/O operations
+  9. Use "unsafe" blocks for inline assembly
+  10. Use "defer" for cleanup
+
+when_asked_to_generate_koda_code:
+  1. Same Pascal-style syntax as Maia
+  2. Use "async/await" for async operations
+  3. Use "spawn" for task creation
+  4. Use Web.Server for HTTP applications
+  5. Use Git.clone for VCS operations
+  6. Use Template.create for HTML templates
+  7. Use task() for build automation
+  8. Use TOML.parse_file for configuration
+
+when_asked_about_ffi:
+  - C: 'extern "C" function name(params): ret'
+  - C++: 'extern "C++" type Class = struct { methods }'
+  - Rust: 'extern "Rust" function name(params): ret'
+  - Zig: 'extern "Zig" function name(params): ret'
+  - Pony: 'extern "Pony" function name(params): ret'
+  - Java: 'extern "Java" function name(params): ret'
+  - Python: 'extern "Python" function name(params): ret'
+  - Objective-C: 'extern "ObjectiveC" function name(params): ret'
+
+when_asked_about_config:
+  format: TOML
+  always_use_toml_for_new_configs
+  convert_existing_configs_to_toml
+  prefer_toml_over_json_yaml_xml
+
+when_asked_about_docs:
+  format: Markdown
+  use_github_flavored_markdown
+  generate_from_doc_comments
+  output_to_docs/ directory
+```
+
+---
+
+End of Specification
+
+```yaml
+specification_version: 0.0.1
+status: ready_for_ai_consumption
+last_updated: 2026-04-10
+maintainer: Purging Light Technologies
+license: MIT
+```
+
+This specification is intended for AI-assisted development. For human-readable documentation, see docs.maiakoda.com
