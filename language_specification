@@ -1,12 +1,4 @@
-MaiaKoda Programming Language Specification
-
-Version 0.0.1 (Pre-alpha)
-
-Release Date: April 10, 2026
-Copyright © 2026 Purging Light Technologies and Contributors
-License: MIT License
-
----
+MaiaKoda Language Specification v0.0.1
 
 Document Information
 
@@ -14,38 +6,15 @@ Property Value
 Specification Version 0.0.1
 Language Version 0.0.1
 Status Pre-alpha
-Release Date 2026-04-10
-Copyright Holder Purging Light Technologies
-License MIT License
-Document ID PLT-MK-SPEC-2026-001
+Release Date 2026-04-14
+Copyright © 2026 Purging Light Technologies
+License MIT
+Documentation Format GitHub Markdown
+Configuration Format TOML
 
 ---
 
-Table of Contents
-
-1. Introduction
-2. Lexical Structure
-3. Data Types
-4. Variables and Constants
-5. Expressions
-6. Statements
-7. Functions and Procedures
-8. Modules and Imports
-9. Memory Management
-10. Concurrency
-11. Safety Features
-12. FFI and Interoperability
-13. WebAssembly Support
-14. Objective-C Support
-15. Configuration (TOML)
-16. Documentation (Markdown)
-17. Compiler Implementation
-18. Versioning
-19. License
-
----
-
-1. Introduction
+Part 1: Introduction
 
 1.1 Overview
 
@@ -55,40 +24,39 @@ Language Type Purpose
 Maia Compiled systems language OS kernels, drivers, embedded systems, performance-critical code
 Koda Interpreted scripting language Embedded scripting, standalone shell, build automation, web development
 
-1.2 Design Philosophy
+1.2 Design Principles
 
 1. Safety First - Multi-layer safety (borrow checking, reference capabilities, compile-time RC)
 2. No Garbage Collection - Deterministic performance, explicit memory management
 3. Zero-Cost Abstractions - No runtime overhead for language features
 4. Pascal Syntax - Clean, readable, no significant whitespace
 5. No Macros - No code obfuscation, comptime functions instead
-6. Self-Contained - No LLVM dependency, native backends for x86_64, ARM64, RISC-V, WASM
-7. TOML Configuration - All configurations use TOML format
-8. Markdown Documentation - All documentation uses GitHub Markdown
+6. TOML Configuration - All configurations use TOML format
+7. Markdown Documentation - All documentation uses GitHub Markdown
 
 1.3 Language Relationship
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         MaiaKoda                                  │
-├─────────────────────────────┬───────────────────────────────────┤
-│           Maia              │              Koda                  │
-│  (Compiled Systems Lang)    │    (Interpreted Scripting Lang)    │
-├─────────────────────────────┼───────────────────────────────────┤
-│ • No GC                     │ • Embedded (Lua-style)             │
-│ • Compile-time RC           │ • Standalone shell (Bash-style)    │
-│ • Borrow checker            │ • Async/await                      │
-│ • Reference capabilities    │ • Native templates                 │
-│ • Explicit allocators       │ • Built-in VCS                     │
-│ • Inline assembly           │ • Built-in ORM                     │
-│ • 4 backends (x86/ARM/RV/WASM)│ • Web framework (first-class)    │
-│ • FFI to 7 languages        │ • FFI via Maia                     │
-└─────────────────────────────┴───────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           MaiaKoda                                        │
+├─────────────────────────────────┬───────────────────────────────────────┤
+│            Maia                  │                Koda                    │
+│    (Compiled Systems Lang)       │      (Interpreted Scripting Lang)      │
+├─────────────────────────────────┼───────────────────────────────────────┤
+│ • No GC                         │ • Embedded (Lua-style)                 │
+│ • Compile-time RC               │ • Standalone shell (Bash-style)        │
+│ • Borrow checker                │ • Async/await                          │
+│ • Reference capabilities        │ • Native templates                     │
+│ • Explicit allocators           │ • Built-in VCS                         │
+│ • Inline assembly               │ • Built-in ORM                         │
+│ • 4 backends (x86/ARM/RV/WASM)  │ • Web framework (first-class)          │
+│ • FFI to 7 languages            │ • FFI via Maia                         │
+└─────────────────────────────────┴───────────────────────────────────────┘
 ```
 
 ---
 
-2. Lexical Structure
+Part 2: Lexical Structure
 
 2.1 Character Set
 
@@ -107,15 +75,55 @@ Tokens are classified as:
 
 2.3 Keywords
 
-Category Keywords
-Types int8, int16, int32, int64, uint8, uint16, uint32, uint64, f32, f64, bool, string, array, struct, enum, type
-Memory own, ref, mut, rc, weak, consume, defer, alloc, free
-Concurrency actor, behavior, spawn, wait, channel, select, async, await
-Control if, elsif, else, for, while, loop, break, continue, return, match, try, catch, throw
-Visibility module, use, export, import, friend, package
-Safety safe, unsafe, defer
-FFI extern, @link, @export
-Other begin, end, procedure, function, var, const, type, as, null
+```yaml
+keywords:
+  module: "module"
+  use: "use"
+  export: "export"
+  var: "var"
+  const: "const"
+  function: "function"
+  procedure: "procedure"
+  type: "type"
+  struct: "struct"
+  enum: "enum"
+  begin: "begin"
+  end: "end"
+  if: "if"
+  then: "then"
+  elsif: "elsif"
+  else: "else"
+  for: "for"
+  while: "while"
+  do: "do"
+  loop: "loop"
+  break: "break"
+  continue: "continue"
+  return: "return"
+  match: "match"
+  as: "as"
+  null: "null"
+  true: "true"
+  false: "false"
+  own: "own"
+  ref: "ref"
+  mut: "mut"
+  rc: "rc"
+  weak: "weak"
+  iso: "iso"
+  trn: "trn"
+  val: "val"
+  box: "box"
+  tag: "tag"
+  actor: "actor"
+  behavior: "behavior"
+  spawn: "spawn"
+  await: "await"
+  async: "async"
+  defer: "defer"
+  unsafe: "unsafe"
+  safe: "safe"
+```
 
 2.4 Identifiers
 
@@ -135,11 +143,11 @@ _snake_case
 Integer Literals
 
 ```pascal
-42          // decimal
-0xFF        // hexadecimal
-0o755       // octal
-0b1010      // binary
-1_000_000   // with underscores
+42          /* decimal */
+0xFF        /* hexadecimal */
+0o755       /* octal */
+0b1010      /* binary */
+1_000_000   /* with underscores */
 ```
 
 Floating-Point Literals
@@ -180,14 +188,45 @@ null
 
 2.6 Comments
 
+Regular Comments
+
+Regular comments use /* */ syntax and can be nested.
+
 ```pascal
-// Single-line comment
+/* This is a comment */
 
-(* Multi-line
-   comment *)
+/* This comment
+   spans multiple
+   lines */
 
-/// Documentation comment (for API docs)
+/* Comments can /* nest */ safely */
 ```
+
+Documentation Comments
+
+Documentation comments use /// syntax for single-line and block documentation.
+
+```pascal
+/// This is a documentation comment
+function add(a: int32, b: int32): int32
+
+///
+/// This is a block documentation comment
+/// that spans multiple lines
+/// 
+/// @param a The first number
+/// @param b The second number
+/// @return The sum of a and b
+///
+function subtract(a: int32, b: int32): int32
+```
+
+Comment Rules Summary
+
+Type Syntax Nesting Purpose
+Regular comment /* ... */ Yes Implementation notes, TODOs, disabled code
+Documentation comment /// ... No API documentation
+Block documentation ///\n/// ...\n/// No Multi-line API documentation
 
 2.7 Operators
 
@@ -209,7 +248,7 @@ Pipeline | (Koda only)
 
 ---
 
-3. Data Types
+Part 3: Data Types
 
 3.1 Primitive Types
 
@@ -302,30 +341,31 @@ tag ❌ ✅ ✅ ✅
 ```pascal
 var maybe: ?int32 = null
 
+/* Safe unwrap */
 if maybe |value| then
     writeln("Value: ", value)
 end
 
-var val := maybe ?? 0  // Default to 0 if null
+var val := maybe ?? 0  /* Default to 0 if null */
 ```
 
 ---
 
-4. Variables and Constants
+Part 4: Variables and Constants
 
 4.1 Variable Declaration
 
 ```pascal
-// Explicit type
+/* Explicit type */
 var x: int32 = 42
 
-// Type inference
+/* Type inference */
 var y := 42
 
-// Multiple variables
+/* Multiple variables */
 var a, b, c: int32 = 1, 2, 3
 
-// With ownership
+/* With ownership */
 var unique: own string := "unique"
 var shared: rc string := "shared"
 ```
@@ -347,7 +387,7 @@ x = 42
 
 ---
 
-5. Expressions
+Part 5: Expressions
 
 5.1 Primary Expressions
 
@@ -365,7 +405,7 @@ a - b
 a * b
 a / b
 a % b
-a // b  // integer division
+a // b  /* integer division */
 ```
 
 5.3 Comparison Expressions
@@ -390,12 +430,12 @@ not a
 5.5 Bitwise Expressions
 
 ```pascal
-a & b   // AND
-a | b   // OR
-a ^ b   // XOR
-~a      // NOT
-a << b  // left shift
-a >> b  // right shift
+a & b   /* AND */
+a | b   /* OR */
+a ^ b   /* XOR */
+~a      /* NOT */
+a << b  /* left shift */
+a >> b  /* right shift */
 ```
 
 5.6 Type Conversion
@@ -407,13 +447,13 @@ value as target_type
 5.7 Range Expression
 
 ```pascal
-0..9        // inclusive range
-0..<10      // exclusive end
+0..9        /* inclusive range */
+0..<10      /* exclusive end */
 ```
 
 ---
 
-6. Statements
+Part 6: Statements
 
 6.1 Block Statement
 
@@ -457,17 +497,17 @@ end
 6.5 For Loop
 
 ```pascal
-// Range loop
+/* Range loop */
 for i in 0..9 do
     statements
 end
 
-// Collection loop
+/* Collection loop */
 for item in collection do
     statements
 end
 
-// Index-value loop
+/* Index-value loop */
 for i, item in collection do
     statements
 end
@@ -509,11 +549,15 @@ return expression
 
 ---
 
-7. Functions and Procedures
+Part 7: Functions and Procedures
 
 7.1 Function Declaration
 
 ```pascal
+/// Adds two numbers together
+/// @param a The first number
+/// @param b The second number
+/// @return The sum of a and b
 function add(a: int32, b: int32): int32
 begin
     return a + b
@@ -523,6 +567,8 @@ end
 7.2 Procedure Declaration
 
 ```pascal
+/// Greets a user by name
+/// @param name The name to greet
 procedure greet(name: string)
 begin
     writeln("Hello, ", name)
@@ -551,7 +597,7 @@ begin
     return result
 end
 
-const FACT_10 := factorial(10)  // Computed at compile time
+const FACT_10 := factorial(10)  /* Computed at compile time */
 ```
 
 7.5 Async Functions (Maia)
@@ -566,11 +612,12 @@ end
 
 ---
 
-8. Modules and Imports
+Part 8: Modules and Imports
 
 8.1 Module Declaration
 
 ```pascal
+/* math.maia */
 module Math;
 
 export function add(a, b: int32): int32
@@ -578,7 +625,7 @@ begin
     return a + b
 end
 
-var _internal: int32  // Not exported
+var _internal: int32  /* Not exported */
 ```
 
 8.2 Import Statement
@@ -602,25 +649,25 @@ const _FILE_ONLY: int32 = 42
 
 ---
 
-9. Memory Management
+Part 9: Memory Management
 
 9.1 Ownership System
 
 ```pascal
 var a: own string := "hello"
-var b: ref string := &a   // borrow
-var c: mut string := &mut a  // mutable borrow
-var d: own string := consume a  // move
-// a is now invalid
+var b: ref string := &a   /* borrow */
+var c: mut string := &mut a  /* mutable borrow */
+var d: own string := consume a  /* move */
+/* a is now invalid */
 ```
 
 9.2 Compile-Time Reference Counting
 
 ```pascal
-var a: rc string := "shared"   // refcount = 1
-var b: rc string := a           // refcount = 2
-var c: rc string := a           // refcount = 3
-var weak: weak string := a      // weak reference
+var a: rc string := "shared"   /* refcount = 1 */
+var b: rc string := a           /* refcount = 2 */
+var c: rc string := a           /* refcount = 3 */
+var weak: weak string := a      /* weak reference */
 ```
 
 9.3 Explicit Allocators
@@ -640,7 +687,7 @@ defer file.close()
 
 ---
 
-10. Concurrency
+Part 10: Concurrency
 
 10.1 Actors
 
@@ -688,7 +735,7 @@ var data := await fetch()
 
 ---
 
-11. Safety Features
+Part 11: Safety Features
 
 11.1 Safety Levels
 
@@ -702,11 +749,11 @@ none ❌ ❌ ❌ ❌
 
 ```pascal
 safe do
-    arr[i] := 42  // Bounds checked
+    arr[i] := 42  /* Bounds checked */
 end
 
 unsafe do
-    arr[i] := 42  // No checks
+    arr[i] := 42  /* No checks */
     asm { mov eax, 42 }
 end
 ```
@@ -723,7 +770,7 @@ end
 
 ---
 
-12. FFI and Interoperability
+Part 12: FFI and Interoperability
 
 12.1 C FFI
 
@@ -780,58 +827,9 @@ extern "ObjectiveC" function objc_msgSend(obj: *objc_object, sel: *objc_selector
 
 ---
 
-13. WebAssembly Support
+Part 13: Configuration (TOML)
 
-13.1 WASM Target
-
-```bash
-maia build --target=wasm32 --output=app.wasm
-```
-
-13.2 WASM Attributes
-
-```pascal
-@wasm(import_module="env", import_name="log")
-function console_log(msg: *u8, len: usize)
-
-@wasm(export_name="main")
-procedure main() { ... }
-```
-
-13.3 WASI Support
-
-```pascal
-@wasm(wasi_preview2)
-function file_open(path: string, flags: u32): u32
-```
-
----
-
-14. Objective-C Support
-
-14.1 Foundation Framework
-
-```pascal
-use ObjectiveC.Foundation
-
-var str := NSString.from_string("Hello")
-writeln(str.to_string())
-```
-
-14.2 AppKit/UIKit
-
-```pascal
-use ObjectiveC.AppKit
-
-var app := NSApplication.shared()
-app.run()
-```
-
----
-
-15. Configuration (TOML)
-
-15.1 Project Configuration (maia.toml)
+13.1 Project Configuration (maia.toml)
 
 ```toml
 [project]
@@ -849,7 +847,7 @@ safety = "full"
 target = "x86_64-linux"
 ```
 
-15.2 Package Manifest (package.toml)
+13.2 Package Manifest (package.toml)
 
 ```toml
 [package]
@@ -860,50 +858,164 @@ version = "0.0.1"
 core = { version = "^0.0.1" }
 ```
 
----
+13.3 Build Configuration (.maia/build.toml)
 
-16. Documentation (Markdown)
+```toml
+[build]
+jobs = 8
+verbose = false
+color = true
 
-16.1 Documentation Comments
-
-```pascal
-/// This function adds two numbers
-/// @param a First number
-/// @param b Second number
-/// @return Sum of a and b
-function add(a, b: int32): int32
-begin
-    return a + b
-end
+[build.cache]
+enabled = true
+directory = ".cache/build"
 ```
 
-16.2 Documentation Generation
+13.4 Repository Configuration (.maia/repo.toml)
+
+```toml
+[repository]
+type = "git"
+url = "https://github.com/purginglight/maiakoda"
+branch = "main"
+
+[repository.submodules]
+enabled = true
+recursive = true
+```
+
+13.5 User Configuration (~/.maiarc.toml)
+
+```toml
+[user]
+name = "developer"
+email = "dev@purginglight.com"
+
+[editor]
+default = "vim"
+syntax = true
+line_numbers = true
+```
+
+13.6 Koda Shell Configuration (~/.kodarc.toml)
+
+```toml
+[shell]
+prompt = "┌─[${USER}@${HOST}]\\n└─> "
+history_size = 10000
+
+[shell.aliases]
+ll = "ls -la"
+gs = "git status"
+gd = "git diff"
+```
+
+---
+
+Part 14: Documentation (Markdown)
+
+14.1 Documentation Comments
+
+Documentation comments use /// syntax and support Markdown formatting.
+
+```pascal
+/// # Math Functions
+/// 
+/// This module provides basic mathematical operations.
+/// 
+/// ## Examples
+/// 
+/// ```pascal
+/// var result := Math.add(5, 3)
+/// writeln(result)  /* 8 */
+/// ```
+/// 
+/// @since 1.0.0
+module Math
+
+/// Adds two integers together.
+/// 
+/// @param a The first number
+/// @param b The second number
+/// @return The sum of a and b
+/// 
+/// @example
+/// var sum := Math.add(10, 20)  /* sum = 30 */
+function add(a: int32, b: int32): int32
+```
+
+14.2 Documentation Tags
+
+Tag Description Example
+@param name description Function parameter @param x The X coordinate
+@return description Return value @return The computed result
+@example code Usage example @example var x := add(5,3)
+@see reference Cross reference @see subtract
+@deprecated reason Deprecation notice @deprecated Use newFunction instead
+@since version Version added @since 1.0.0
+
+14.3 Documentation Generation
 
 ```bash
 maia docs --output=docs/
 ```
 
+14.4 README.md Structure
+
+```markdown
+# Project Name
+
+[![Build Status](https://img.shields.io/...)](...)
+[![License: MIT](https://img.shields.io/...)](...)
+
+## Description
+
+Brief description of the project.
+
+## Installation
+
+```bash
+koda install
+```
+
+Usage
+
+```pascal
+var result := Math.add(5, 3)
+```
+
+Documentation
+
+· API Reference
+· Contributing Guide
+
+License
+
+MIT License - see LICENSE
+
+```
+
 ---
 
-17. Compiler Implementation
+## Part 15: Compiler Implementation
 
-17.1 Backends
+### 15.1 Backends
 
-Architecture Status Output Format
-x86_64 ✅ ELF, Mach-O, PE
-ARM64 ✅ ELF, Mach-O, PE
-RISC-V ✅ ELF
-WebAssembly ✅ WASM
+| Architecture | Status | Output Format |
+|--------------|--------|---------------|
+| x86_64 | ✅ | ELF, Mach-O, PE |
+| ARM64 | ✅ | ELF, Mach-O, PE |
+| RISC-V | ✅ | ELF |
+| WebAssembly | ✅ | WASM |
 
-17.2 Self-Hosting
+### 15.2 Self-Hosting
 
 The Maia compiler is self-hosted:
-
 1. Stage 0: Zig compiler (bootstrap)
 2. Stage 1: Maia compiler (compiled by Zig)
 3. Stage 2: Maia compiler (compiled by Stage 1)
 
-17.3 Compilation Flags
+### 15.3 Compilation Flags
 
 ```bash
 maia build --target=x86_64-linux --release
@@ -913,9 +1025,9 @@ maia build --emit-llvm --output=output.ll
 
 ---
 
-18. Versioning
+Part 16: Versioning
 
-18.1 Version Scheme: major.minor.development
+16.1 Version Scheme: major.minor.development
 
 Stage Minor Development Example
 Pre-alpha 0 1-99 0.0.1
@@ -923,20 +1035,174 @@ Alpha 1 1-99 0.1.5
 Beta 2 1-99 0.2.3
 RC 3 1-99 0.3.2
 Stable 4+ 0 1.0.0
+Patch 4+ 1-99 1.1.5
 
-18.2 Compatibility
+16.2 Compatibility Rules
 
-· Major version change = Breaking changes
-· Minor version change = New features (backward compatible)
-· Development increment = Bug fixes, internal changes
+```yaml
+compatibility:
+  same_major: compatible
+  major_increase: breaking
+  minor_increase: new_features_backward_compatible
+  development_increase: bug_fixes_only
+```
 
 ---
 
-19. License
+Part 17: Grammar (EBNF)
+
+```ebnf
+(* Core syntax *)
+program         = { module | statement }
+module          = "module" ident ";" { declaration }
+declaration     = var_decl | const_decl | func_decl | proc_decl | type_decl
+
+var_decl        = "var" ident { "," ident } ":" type [ "=" expr ]
+const_decl      = "const" ident ":" type "=" expr
+func_decl       = [ "async" ] "function" ident "(" [ params ] ")" ":" type [ ";" ] block
+proc_decl       = [ "async" ] "procedure" ident "(" [ params ] ")" [ ";" ] block
+type_decl       = "type" ident "=" type
+
+block           = "begin" { statement } "end"
+
+statement       = assignment | if_stmt | for_stmt | while_stmt | match_stmt
+                | return_stmt | defer_stmt | expr ";"
+
+assignment      = ident [ "[" expr "]" ] assign_op expr
+assign_op       = ":=" | "+=" | "-=" | "*=" | "/=" | "%="
+
+if_stmt         = "if" expr "then" block { "elsif" expr "then" block } [ "else" block ] "end"
+
+for_stmt        = "for" ident "in" range "do" block "end"
+                | "for" ident "," ident "in" expr "do" block "end"
+
+while_stmt      = "while" expr "do" block "end"
+
+match_stmt      = "match" expr "{" { match_case } "}"
+match_case      = pattern "=>" block ","
+
+return_stmt     = "return" [ expr ]
+
+defer_stmt      = "defer" expr
+
+(* Ownership *)
+type            = primitive_type | composite_type | qualified_type
+qualified_type  = [ "own" | "ref" | "mut" | "rc" | "weak" ] type
+
+(* Concurrency *)
+actor_decl      = "actor" ident "{" { behavior_decl | field_decl } "}"
+behavior_decl   = "behavior" ident "(" [ params ] ")" block
+channel_decl    = "channel(" type ")"
+spawn_stmt      = "spawn" expr
+await_expr      = "await" expr
+
+(* Safety *)
+safe_block      = "safe" "do" block "end"
+unsafe_block    = "unsafe" "do" block "end"
+
+(* FFI *)
+extern_decl     = "extern" string_literal function_decl
+link_attr       = "@link(" string_literal [ "," "static:" bool ] ")"
+export_attr     = "@export(" string_literal [ "," "name:" string_literal ] ")"
+
+(* Comptime *)
+comptime_attr   = "@comptime"
+comptime_func   = "@comptime" function_decl
+```
+
+---
+
+Part 18: Complete Source Example
+
+18.1 Maia Example
+
+```pascal
+/* math.maia
+   This module provides basic mathematical functions
+*/
+
+module Math
+
+/// Adds two integers together.
+/// @param a The first number
+/// @param b The second number
+/// @return The sum of a and b
+/// @example
+/// var result := Math.add(5, 3)  /* result = 8 */
+export function add(a: int32, b: int32): int32
+
+///
+/// Subtracts one integer from another.
+/// 
+/// @param a The number to subtract from
+/// @param b The number to subtract
+/// @return The difference a - b
+/// @since 1.0.0
+///
+export function subtract(a: int32, b: int32): int32
+
+/// The mathematical constant Pi
+export const PI: f64 = 3.141592653589793
+
+/* Implementation */
+function add(a: int32, b: int32): int32
+begin
+    return a + b
+end
+
+function subtract(a: int32, b: int32): int32
+begin
+    return a - b
+end
+
+/// Main entry point
+procedure main()
+begin
+    var sum := add(10, 20)
+    var diff := subtract(100, 45)
+    
+    writeln("Sum: ", sum)
+    writeln("Difference: ", diff)
+end
+```
+
+18.2 Koda Example
+
+```koda
+/* webserver.koda - Simple web server */
+import Koda.Web
+
+/// Main web server application
+procedure main()
+begin
+    var app := Web.Server.create()
+    
+    /// Handle root endpoint
+    app.get("/", |req| {
+        return "Hello, World!"
+    })
+    
+    /// Handle JSON API
+    app.get("/api/status", |req| {
+        return {
+            status = "ok",
+            version = "1.0.0",
+            timestamp = Time.now(),
+        }
+    })
+    
+    writeln("Server running on http://localhost:8080")
+    app.listen(8080)
+end
+```
+
+---
+
+Part 19: License
 
 MIT License
 
-```
+```text
 Copyright (c) 2026 Purging Light Technologies and Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -960,69 +1226,65 @@ SOFTWARE.
 
 ---
 
-Appendix A: Hello World Examples
+Appendix A: File Extensions
 
-Maia
+```yaml
+maia:
+  source: .maia
+  module: .maia
+  interface: .mai
+  object: .o
+  static_lib: .a
+  shared_lib: .so, .dylib, .dll
 
-```pascal
-module Main;
+koda:
+  script: .koda
+  module: .koda
+  build_script: build.koda
 
-procedure main()
-begin
-    writeln("Hello, Maia!")
-end
-```
+config:
+  project: maia.toml
+  package: package.toml
+  build: .maia/build.toml
+  repo: .maia/repo.toml
+  user: .kodarc.toml
 
-Koda
-
-```pascal
-// hello.koda
-writeln("Hello, Koda!")
-```
-
----
-
-Appendix B: Grammar (EBNF)
-
-```ebnf
-program         = { module | statement }
-module          = "module" identifier ";" { declaration }
-declaration     = variable_decl | constant_decl | function_decl | procedure_decl | type_decl
-
-variable_decl   = "var" identifier { "," identifier } ":" type [ "=" expression ]
-constant_decl   = "const" identifier ":" type "=" expression
-function_decl   = "function" identifier "(" [ parameters ] ")" ":" type [ ";" ] block
-procedure_decl  = "procedure" identifier "(" [ parameters ] ")" [ ";" ] block
-type_decl       = "type" identifier "=" type
-
-block           = "begin" { statement } "end"
-statement       = assignment | if_statement | for_statement | while_statement | match_statement
-                | return_statement | defer_statement | expression ";"
-
-expression      = primary { binary_op primary }
-primary         = literal | identifier | "(" expression ")" | function_call
-
-literal         = integer_literal | float_literal | string_literal | boolean_literal | null_literal
+documentation:
+  main: README.md
+  contributing: CONTRIBUTING.md
+  changelog: CHANGELOG.md
+  license: LICENSE
 ```
 
 ---
 
-Appendix C: Change Log
+Appendix B: Change Log
 
 Version Date Changes
-0.0.1 2026-04-10 Initial specification release
+0.0.1 2026-04-14 Initial specification release
 
 ---
 
-Appendix D: Contributors
+Appendix C: Document Information
 
-· Purging Light Technologies (Primary Developer)
-· Open Source Contributors
+```toml
+# spec.toml
+[document]
+title = "MaiaKoda Language Specification"
+version = "0.0.1"
+status = "pre-alpha"
+date = "2026-04-14"
+
+[document.copyright]
+holder = "Purging Light Technologies"
+year = 2026
+license = "MIT"
+
+[document.format]
+configuration = "TOML"
+documentation = "GitHub Markdown"
+```
 
 ---
 
-End of Specification
-
----
-
-This document is the official specification for the MaiaKoda programming language version 0.0.1. For updates and errata, please visit https://github.com/purginglight/maiakoda
+End of Specification v0.0.1
