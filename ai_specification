@@ -1,1075 +1,3062 @@
-MaiaKoda Language Specification v0.0.1
+MaiaKoda Language Development Roadmap: Claude Implementation Specification
 
-For AI-Assisted Development (Claude Consumption)
+Executive Summary
 
----
-
-Document Metadata
+This specification defines a multi-phase development plan for creating the MaiaKoda language ecosystem. Each phase produces a working, testable artifact that builds upon previous phases.
 
 ```yaml
-spec:
-  name: MaiaKoda
-  version: 0.0.1
-  status: pre-alpha
-  date: 2026-04-10
-  copyright: Purging Light Technologies
-  license: MIT
-  purpose: AI-assisted development specification
-```
-
----
-
-Part 1: Language Overview
-
-1.1 Two-Language Architecture
-
-```yaml
-maia:
-  type: compiled
-  paradigm: multi
-  memory: no_gc + compile_time_rc
-  safety: borrow_checker + reference_capabilities
-  concurrency: actors + channels + async/await
-  targets: [x86_64, arm64, riscv64, wasm32]
-  ffi: [c, cpp, rust, zig, pony, java, python, objective_c]
-
-koda:
-  type: interpreted
-  paradigm: multi
-  modes: [embedded, standalone_shell]
-  features: [async_await, templates, vcs, orm, web_framework]
-  ffi: via_maia
-```
-
-1.2 Shared Syntax Principles
-
-```yaml
-syntax:
-  style: pascal
-  blocks: begin...end
-  comments: "//" and "(* *)"
-  case_sensitive: true
-  semicolons: required
-  whitespace: insignificant
+phases:
+  phase_0:
+    name: "Bootstrap Compiler (Zig)"
+    output: "maia-koda-bootstrap"
+    language: "Zig"
+    duration: "4-6 weeks"
+    
+  phase_1:
+    name: "Self-Hosted Compiler"
+    output: "maia-koda-selfhosted"
+    language: "MaiaKoda"
+    duration: "6-8 weeks"
+    
+  phase_2:
+    name: "Modal Editor (Kakoune-style)"
+    output: "mkedit"
+    language: "MaiaKoda"
+    duration: "4-5 weeks"
+    
+  phase_3:
+    name: "TUI Documentation Reader"
+    output: "mkdocs"
+    language: "Koda"
+    duration: "2-3 weeks"
 ```
 
 ---
 
-Part 2: Maia Specification
+Part 1: Phase 0 - Bootstrap Compiler (Zig)
 
-2.1 Core Types
-
-```yaml
-primitive_types:
-  signed: [i8, i16, i32, i64, isize]
-  unsigned: [u8, u16, u32, u64, usize]
-  floats: [f32, f64]
-  other: [bool, string, char]
-
-composite_types:
-  array: "[N]T"
-  slice: "[]T"
-  dynamic_array: "array(T)"
-  struct: "struct { fields }"
-  enum: "enum { variants }"
-  option: "?T"
-```
-
-2.2 Ownership Qualifiers
+1.1 Goals
 
 ```yaml
-qualifiers:
-  own: unique_ownership, no_alias, moves_on_assign
-  ref: immutable_borrow, multiple_allowed
-  mut: mutable_borrow, exclusive
-  rc: reference_counted, shared_ownership
-  weak: weak_reference, no_count_increment
+phase_0_goals:
+  - implement_full_language_spec: true
+  - produce_working_compiler: true
+  - support_all_features: true
+  - generate_executables: true
+  - provide_library: true
 ```
 
-2.3 Reference Capabilities
+1.2 Bootstrap Compiler Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Phase 0: Bootstrap Compiler (Zig)                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐               │
+│  │   main.zig  │────▶│  lexer.zig  │────▶│  tokens.zig │               │
+│  └─────────────┘     └─────────────┘     └─────────────┘               │
+│         │                   │                   │                       │
+│         ▼                   ▼                   ▼                       │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐               │
+│  │  parser.zig │────▶│   ast.zig   │────▶│  sema.zig   │               │
+│  └─────────────┘     └─────────────┘     └─────────────┘               │
+│         │                   │                   │                       │
+│         ▼                   ▼                   ▼                       │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐               │
+│  │   ir.zig    │────▶│ codegen.zig │────▶│ output.zig  │               │
+│  └─────────────┘     └─────────────┘     └─────────────┘               │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+1.3 Phase 0 File Structure
+
+```
+bootstrap/
+├── src/
+│   ├── main.zig              # Compiler entry point
+│   ├── lexer.zig             # Tokenization
+│   ├── parser.zig            # AST construction
+│   ├── ast.zig               # AST node definitions
+│   ├── sema.zig              # Semantic analysis
+│   ├── ir.zig                # Intermediate representation
+│   ├── codegen/
+│   │   ├── x86_64.zig        # x86_64 code generation
+│   │   ├── arm64.zig         # ARM64 code generation
+│   │   ├── riscv64.zig       # RISC-V code generation
+│   │   └── wasm32.zig        # WebAssembly code generation
+│   ├── assembler/
+│   │   ├── x86_64.zig        # x86_64 assembler
+│   │   ├── arm64.zig         # ARM64 assembler
+│   │   └── riscv64.zig       # RISC-V assembler
+│   ├── linker.zig            # ELF/Mach-O/PE linking
+│   └── runtime.zig           # Runtime library
+├── tests/
+│   ├── lexer_tests.zig
+│   ├── parser_tests.zig
+│   ├── sema_tests.zig
+│   └── codegen_tests.zig
+├── build.zig                 # Zig build file
+└── README.md                 # Documentation
+```
+
+1.4 Bootstrap Compiler Implementation Details
+
+1.4.1 Main Entry Point (Zig)
+
+```zig
+// bootstrap/src/main.zig
+const std = @import("std");
+const lexer = @import("lexer.zig");
+const parser = @import("parser.zig");
+const sema = @import("sema.zig");
+const codegen = @import("codegen/x86_64.zig");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Parse command line arguments
+    var args = std.process.args();
+    _ = args.skip(); // skip program name
+    const input_file = args.next() orelse {
+        std.debug.print("Usage: maia <file.maia>\n", .{});
+        return error.MissingInput;
+    };
+
+    // Read source file
+    const source = try std.fs.cwd().readFileAlloc(allocator, input_file, std.math.maxInt(usize));
+    defer allocator.free(source);
+
+    // Lexical analysis
+    var lex = lexer.Lexer.init(source);
+    var tokens = try lex.tokenize(allocator);
+    defer tokens.deinit();
+
+    // Parse
+    var pars = parser.Parser.init(tokens.items);
+    const ast = try pars.parse(allocator);
+    defer ast.deinit();
+
+    // Semantic analysis
+    var sem = sema.Analyzer.init(allocator);
+    try sem.analyze(ast);
+
+    // Code generation
+    var output = std.ArrayList(u8).init(allocator);
+    defer output.deinit();
+
+    var gen = codegen.Generator.init(allocator, &output);
+    try gen.generate(ast);
+
+    // Write output
+    const output_file = try std.fs.cwd().createFile("a.out", .{});
+    defer output_file.close();
+    try output_file.writeAll(output.items);
+}
+```
+
+1.4.2 Lexer Implementation (Zig)
+
+```zig
+// bootstrap/src/lexer.zig
+const std = @import("std");
+
+pub const TokenKind = enum {
+    // Keywords
+    KW_MODULE,
+    KW_USE,
+    KW_EXPORT,
+    KW_VAR,
+    KW_CONST,
+    KW_FUNCTION,
+    KW_PROCEDURE,
+    KW_TYPE,
+    KW_STRUCT,
+    KW_ENUM,
+    KW_BEGIN,
+    KW_END,
+    KW_IF,
+    KW_THEN,
+    KW_ELSIF,
+    KW_ELSE,
+    KW_FOR,
+    KW_WHILE,
+    KW_DO,
+    KW_LOOP,
+    KW_BREAK,
+    KW_CONTINUE,
+    KW_RETURN,
+    KW_MATCH,
+    KW_AS,
+    KW_NULL,
+    KW_TRUE,
+    KW_FALSE,
+    KW_OWN,
+    KW_REF,
+    KW_MUT,
+    KW_RC,
+    KW_WEAK,
+    KW_ISO,
+    KW_TRN,
+    KW_VAL,
+    KW_BOX,
+    KW_TAG,
+    KW_ACTOR,
+    KW_BEHAVIOR,
+    KW_SPAWN,
+    KW_AWAIT,
+    KW_ASYNC,
+    KW_DEFER,
+    KW_UNSAFE,
+    KW_SAFE,
+    
+    // Operators
+    OP_PLUS,
+    OP_MINUS,
+    OP_STAR,
+    OP_SLASH,
+    OP_PERCENT,
+    OP_DOUBLE_SLASH,
+    OP_ASSIGN,
+    OP_COLON_EQUALS,
+    OP_PLUS_EQUALS,
+    OP_MINUS_EQUALS,
+    OP_STAR_EQUALS,
+    OP_SLASH_EQUALS,
+    OP_PERCENT_EQUALS,
+    OP_EQUALS_EQUALS,
+    OP_NOT_EQUALS,
+    OP_LESS,
+    OP_GREATER,
+    OP_LESS_EQUALS,
+    OP_GREATER_EQUALS,
+    OP_AND,
+    OP_OR,
+    OP_NOT,
+    OP_BIT_AND,
+    OP_BIT_OR,
+    OP_BIT_XOR,
+    OP_BIT_NOT,
+    OP_SHIFT_LEFT,
+    OP_SHIFT_RIGHT,
+    OP_RANGE,
+    OP_ARROW,
+    OP_DOT,
+    OP_COMMA,
+    OP_SEMICOLON,
+    OP_COLON,
+    OP_LPAREN,
+    OP_RPAREN,
+    OP_LBRACKET,
+    OP_RBRACKET,
+    OP_LBRACE,
+    OP_RBRACE,
+    
+    // Literals
+    LIT_INTEGER,
+    LIT_FLOAT,
+    LIT_STRING,
+    LIT_CHAR,
+    
+    // Other
+    IDENTIFIER,
+    COMMENT_REGULAR,
+    COMMENT_DOC,
+    COMMENT_DOC_BLOCK,
+    WHITESPACE,
+    ERROR,
+    EOF,
+};
+
+pub const Token = struct {
+    kind: TokenKind,
+    start: usize,
+    end: usize,
+    line: u32,
+    column: u32,
+};
+
+pub const Lexer = struct {
+    source: []const u8,
+    position: usize,
+    line: u32,
+    column: u32,
+    
+    pub fn init(source: []const u8) Lexer {
+        return Lexer{
+            .source = source,
+            .position = 0,
+            .line = 1,
+            .column = 1,
+        };
+    }
+    
+    pub fn tokenize(self: *Lexer, allocator: std.mem.Allocator) !std.ArrayList(Token) {
+        var tokens = std.ArrayList(Token).init(allocator);
+        
+        while (true) {
+            const tok = self.nextToken() catch |err| {
+                std.debug.print("Lexical error at line {}, column {}\n", .{self.line, self.column});
+                return err;
+            };
+            try tokens.append(tok);
+            if (tok.kind == TokenKind.EOF) break;
+        }
+        
+        return tokens;
+    }
+    
+    fn nextToken(self: *Lexer) !Token {
+        self.skipWhitespace();
+        
+        if (self.position >= self.source.len) {
+            return Token{
+                .kind = TokenKind.EOF,
+                .start = self.position,
+                .end = self.position,
+                .line = self.line,
+                .column = self.column,
+            };
+        }
+        
+        const c = self.source[self.position];
+        const start = self.position;
+        const line = self.line;
+        const col = self.column;
+        
+        // Identifiers and keywords
+        if (std.ascii.isAlphabetic(c) or c == '_') {
+            return self.readIdentifier(start, line, col);
+        }
+        
+        // Numbers
+        if (std.ascii.isDigit(c)) {
+            return self.readNumber(start, line, col);
+        }
+        
+        // Strings
+        if (c == '"') {
+            return self.readString(start, line, col);
+        }
+        
+        // Characters
+        if (c == '\'') {
+            return self.readChar(start, line, col);
+        }
+        
+        // Comments
+        if (c == '/') {
+            if (self.peek() == '*') {
+                return self.readRegularComment(start, line, col);
+            }
+            if (self.peek() == '/') {
+                if (self.peekOffset(2) == '/') {
+                    return self.readDocCommentBlock(start, line, col);
+                }
+                return self.readDocComment(start, line, col);
+            }
+        }
+        
+        // Operators and punctuation
+        return self.readOperator(start, line, col);
+    }
+    
+    fn readIdentifier(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        while (self.position < self.source.len) {
+            const c = self.source[self.position];
+            if (!std.ascii.isAlphanumeric(c) and c != '_') break;
+            self.position += 1;
+            self.column += 1;
+        }
+        
+        const text = self.source[start..self.position];
+        const kind = keywordMap.get(text) orelse TokenKind.IDENTIFIER;
+        
+        return Token{
+            .kind = kind,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn readRegularComment(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        self.position += 2; // skip /*
+        var depth: u32 = 1;
+        
+        while (depth > 0 and self.position < self.source.len) {
+            if (self.position + 1 < self.source.len and
+                self.source[self.position] == '/' and
+                self.source[self.position + 1] == '*') {
+                depth += 1;
+                self.position += 2;
+            } else if (self.position + 1 < self.source.len and
+                       self.source[self.position] == '*' and
+                       self.source[self.position + 1] == '/') {
+                depth -= 1;
+                self.position += 2;
+            } else {
+                if (self.source[self.position] == '\n') {
+                    self.line += 1;
+                    self.column = 1;
+                } else {
+                    self.column += 1;
+                }
+                self.position += 1;
+            }
+        }
+        
+        return Token{
+            .kind = TokenKind.COMMENT_REGULAR,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn readDocComment(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        self.position += 3; // skip ///
+        
+        while (self.position < self.source.len) {
+            const c = self.source[self.position];
+            if (c == '\n') break;
+            self.position += 1;
+            self.column += 1;
+        }
+        
+        return Token{
+            .kind = TokenKind.COMMENT_DOC,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn readDocCommentBlock(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        self.position += 3; // skip ///
+        
+        // Read first line
+        while (self.position < self.source.len) {
+            const c = self.source[self.position];
+            if (c == '\n') {
+                self.position += 1;
+                self.line += 1;
+                self.column = 1;
+                break;
+            }
+            self.position += 1;
+            self.column += 1;
+        }
+        
+        // Read subsequent lines starting with ///
+        while (self.position + 2 < self.source.len and
+               self.source[self.position] == '/' and
+               self.source[self.position + 1] == '/' and
+               self.source[self.position + 2] == '/') {
+            self.position += 3;
+            self.column += 3;
+            
+            while (self.position < self.source.len) {
+                const c = self.source[self.position];
+                if (c == '\n') {
+                    self.position += 1;
+                    self.line += 1;
+                    self.column = 1;
+                    break;
+                }
+                self.position += 1;
+                self.column += 1;
+            }
+        }
+        
+        return Token{
+            .kind = TokenKind.COMMENT_DOC_BLOCK,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn readNumber(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        var is_float = false;
+        
+        while (self.position < self.source.len) {
+            const c = self.source[self.position];
+            if (std.ascii.isDigit(c)) {
+                self.position += 1;
+                self.column += 1;
+            } else if (c == '.' and !is_float) {
+                is_float = true;
+                self.position += 1;
+                self.column += 1;
+            } else {
+                break;
+            }
+        }
+        
+        const kind = if (is_float) TokenKind.LIT_FLOAT else TokenKind.LIT_INTEGER;
+        
+        return Token{
+            .kind = kind,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn readString(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        self.position += 1; // skip opening "
+        self.column += 1;
+        
+        while (self.position < self.source.len) {
+            const c = self.source[self.position];
+            if (c == '"') {
+                self.position += 1;
+                self.column += 1;
+                break;
+            }
+            if (c == '\\') {
+                self.position += 2;
+                self.column += 2;
+            } else {
+                if (c == '\n') {
+                    self.line += 1;
+                    self.column = 1;
+                } else {
+                    self.column += 1;
+                }
+                self.position += 1;
+            }
+        }
+        
+        return Token{
+            .kind = TokenKind.LIT_STRING,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn readChar(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        self.position += 1; // skip opening '
+        self.column += 1;
+        
+        if (self.position < self.source.len) {
+            if (self.source[self.position] == '\\') {
+                self.position += 2;
+                self.column += 2;
+            } else {
+                self.position += 1;
+                self.column += 1;
+            }
+        }
+        
+        if (self.position < self.source.len and self.source[self.position] == '\'') {
+            self.position += 1;
+            self.column += 1;
+        }
+        
+        return Token{
+            .kind = TokenKind.LIT_CHAR,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn readOperator(self: *Lexer, start: usize, line: u32, col: u32) !Token {
+        const c = self.source[self.position];
+        self.position += 1;
+        self.column += 1;
+        
+        // Two-character operators
+        if (self.position < self.source.len) {
+            const next = self.source[self.position];
+            const twoChar = [2]u8{ c, next };
+            
+            const twoCharKind = twoCharMap.get(twoChar);
+            if (twoCharKind) |kind| {
+                self.position += 1;
+                self.column += 1;
+                return Token{
+                    .kind = kind,
+                    .start = start,
+                    .end = self.position,
+                    .line = line,
+                    .column = col,
+                };
+            }
+        }
+        
+        // Single-character operators
+        const kind = singleCharMap.get(c) orelse TokenKind.ERROR;
+        
+        return Token{
+            .kind = kind,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        };
+    }
+    
+    fn skipWhitespace(self: *Lexer) void {
+        while (self.position < self.source.len) {
+            const c = self.source[self.position];
+            switch (c) {
+                ' ', '\t' => {
+                    self.position += 1;
+                    self.column += 1;
+                },
+                '\n' => {
+                    self.position += 1;
+                    self.line += 1;
+                    self.column = 1;
+                },
+                else => break,
+            }
+        }
+    }
+    
+    fn peek(self: *Lexer) u8 {
+        if (self.position + 1 < self.source.len) {
+            return self.source[self.position + 1];
+        }
+        return 0;
+    }
+    
+    fn peekOffset(self: *Lexer, offset: usize) u8 {
+        if (self.position + offset < self.source.len) {
+            return self.source[self.position + offset];
+        }
+        return 0;
+    }
+};
+
+const keywordMap = std.StaticStringMap(TokenKind).initComptime(.{
+    .{ "module", TokenKind.KW_MODULE },
+    .{ "use", TokenKind.KW_USE },
+    .{ "export", TokenKind.KW_EXPORT },
+    .{ "var", TokenKind.KW_VAR },
+    .{ "const", TokenKind.KW_CONST },
+    .{ "function", TokenKind.KW_FUNCTION },
+    .{ "procedure", TokenKind.KW_PROCEDURE },
+    .{ "type", TokenKind.KW_TYPE },
+    .{ "struct", TokenKind.KW_STRUCT },
+    .{ "enum", TokenKind.KW_ENUM },
+    .{ "begin", TokenKind.KW_BEGIN },
+    .{ "end", TokenKind.KW_END },
+    .{ "if", TokenKind.KW_IF },
+    .{ "then", TokenKind.KW_THEN },
+    .{ "elsif", TokenKind.KW_ELSIF },
+    .{ "else", TokenKind.KW_ELSE },
+    .{ "for", TokenKind.KW_FOR },
+    .{ "while", TokenKind.KW_WHILE },
+    .{ "do", TokenKind.KW_DO },
+    .{ "loop", TokenKind.KW_LOOP },
+    .{ "break", TokenKind.KW_BREAK },
+    .{ "continue", TokenKind.KW_CONTINUE },
+    .{ "return", TokenKind.KW_RETURN },
+    .{ "match", TokenKind.KW_MATCH },
+    .{ "as", TokenKind.KW_AS },
+    .{ "null", TokenKind.KW_NULL },
+    .{ "true", TokenKind.KW_TRUE },
+    .{ "false", TokenKind.KW_FALSE },
+    .{ "own", TokenKind.KW_OWN },
+    .{ "ref", TokenKind.KW_REF },
+    .{ "mut", TokenKind.KW_MUT },
+    .{ "rc", TokenKind.KW_RC },
+    .{ "weak", TokenKind.KW_WEAK },
+    .{ "iso", TokenKind.KW_ISO },
+    .{ "trn", TokenKind.KW_TRN },
+    .{ "val", TokenKind.KW_VAL },
+    .{ "box", TokenKind.KW_BOX },
+    .{ "tag", TokenKind.KW_TAG },
+    .{ "actor", TokenKind.KW_ACTOR },
+    .{ "behavior", TokenKind.KW_BEHAVIOR },
+    .{ "spawn", TokenKind.KW_SPAWN },
+    .{ "await", TokenKind.KW_AWAIT },
+    .{ "async", TokenKind.KW_ASYNC },
+    .{ "defer", TokenKind.KW_DEFER },
+    .{ "unsafe", TokenKind.KW_UNSAFE },
+    .{ "safe", TokenKind.KW_SAFE },
+});
+
+const singleCharMap = std.StaticStringMap(TokenKind).initComptime(.{
+    .{ "+", TokenKind.OP_PLUS },
+    .{ "-", TokenKind.OP_MINUS },
+    .{ "*", TokenKind.OP_STAR },
+    .{ "/", TokenKind.OP_SLASH },
+    .{ "%", TokenKind.OP_PERCENT },
+    .{ "=", TokenKind.OP_ASSIGN },
+    .{ "<", TokenKind.OP_LESS },
+    .{ ">", TokenKind.OP_GREATER },
+    .{ "&", TokenKind.OP_BIT_AND },
+    .{ "|", TokenKind.OP_BIT_OR },
+    .{ "^", TokenKind.OP_BIT_XOR },
+    .{ "~", TokenKind.OP_BIT_NOT },
+    .{ ".", TokenKind.OP_DOT },
+    .{ ",", TokenKind.OP_COMMA },
+    .{ ";", TokenKind.OP_SEMICOLON },
+    .{ ":", TokenKind.OP_COLON },
+    .{ "(", TokenKind.OP_LPAREN },
+    .{ ")", TokenKind.OP_RPAREN },
+    .{ "[", TokenKind.OP_LBRACKET },
+    .{ "]", TokenKind.OP_RBRACKET },
+    .{ "{", TokenKind.OP_LBRACE },
+    .{ "}", TokenKind.OP_RBRACE },
+});
+
+const twoCharMap = std.StaticStringMap(TokenKind).initComptime(.{
+    .{ ":=", TokenKind.OP_COLON_EQUALS },
+    .{ "+=", TokenKind.OP_PLUS_EQUALS },
+    .{ "-=", TokenKind.OP_MINUS_EQUALS },
+    .{ "*=", TokenKind.OP_STAR_EQUALS },
+    .{ "/=", TokenKind.OP_SLASH_EQUALS },
+    .{ "%=", TokenKind.OP_PERCENT_EQUALS },
+    .{ "==", TokenKind.OP_EQUALS_EQUALS },
+    .{ "!=", TokenKind.OP_NOT_EQUALS },
+    .{ "<=", TokenKind.OP_LESS_EQUALS },
+    .{ ">=", TokenKind.OP_GREATER_EQUALS },
+    .{ "&&", TokenKind.OP_AND },
+    .{ "||", TokenKind.OP_OR },
+    .{ "<<", TokenKind.OP_SHIFT_LEFT },
+    .{ ">>", TokenKind.OP_SHIFT_RIGHT },
+    .{ "..", TokenKind.OP_RANGE },
+    .{ "->", TokenKind.OP_ARROW },
+});
+```
+
+1.4.3 Parser Implementation (Zig)
+
+```zig
+// bootstrap/src/parser.zig
+const std = @import("std");
+const lexer = @import("lexer.zig");
+
+pub const ASTNode = union(enum) {
+    Program: struct {
+        modules: []Module,
+        statements: []Statement,
+    },
+    Module: struct {
+        name: []const u8,
+        declarations: []Declaration,
+    },
+    Declaration: union(enum) {
+        Variable: VariableDecl,
+        Constant: ConstantDecl,
+        Function: FunctionDecl,
+        Procedure: ProcedureDecl,
+        Type: TypeDecl,
+        Actor: ActorDecl,
+    },
+    VariableDecl: struct {
+        name: []const u8,
+        type: ?Type,
+        init: ?Expression,
+        mutability: Mutability,
+        ownership: Ownership,
+    },
+    ConstantDecl: struct {
+        name: []const u8,
+        type: Type,
+        value: Expression,
+    },
+    FunctionDecl: struct {
+        name: []const u8,
+        parameters: []Parameter,
+        return_type: ?Type,
+        body: Block,
+        is_async: bool,
+        is_comptime: bool,
+        doc_comment: ?[]const u8,
+    },
+    // ... additional AST node definitions
+};
+
+pub const Parser = struct {
+    tokens: []lexer.Token,
+    position: usize,
+    
+    pub fn init(tokens: []lexer.Token) Parser {
+        return Parser{
+            .tokens = tokens,
+            .position = 0,
+        };
+    }
+    
+    pub fn parse(self: *Parser, allocator: std.mem.Allocator) !ASTNode {
+        var program = ASTNode.Program{
+            .modules = try allocator.alloc(ASTNode.Module, 0),
+            .statements = try allocator.alloc(ASTNode.Statement, 0),
+        };
+        
+        while (!self.isAtEnd()) {
+            self.skipWhitespaceAndDocs();
+            if (self.isAtEnd()) break;
+            
+            if (self.peek().kind == lexer.TokenKind.KW_MODULE) {
+                const module = try self.parseModule(allocator);
+                // Add to program.modules
+            } else {
+                const decl = try self.parseDeclaration(allocator);
+                // Add to program.statements
+            }
+        }
+        
+        return ASTNode{ .Program = program };
+    }
+    
+    fn parseModule(self: *Parser, allocator: std.mem.Allocator) !ASTNode.Module {
+        self.expect(lexer.TokenKind.KW_MODULE);
+        const name_token = self.expect(lexer.TokenKind.IDENTIFIER);
+        const name = name_token.text(self.tokens);
+        
+        var declarations = std.ArrayList(ASTNode.Declaration).init(allocator);
+        
+        while (!self.isAtEnd()) {
+            self.skipWhitespaceAndDocs();
+            if (self.peek().kind == lexer.TokenKind.KW_EXPORT or
+                self.peek().kind == lexer.TokenKind.KW_VAR or
+                self.peek().kind == lexer.TokenKind.KW_CONST or
+                self.peek().kind == lexer.TokenKind.KW_FUNCTION or
+                self.peek().kind == lexer.TokenKind.KW_PROCEDURE or
+                self.peek().kind == lexer.TokenKind.KW_TYPE or
+                self.peek().kind == lexer.TokenKind.KW_ACTOR) {
+                const decl = try self.parseDeclaration(allocator);
+                try declarations.append(decl);
+            } else {
+                break;
+            }
+        }
+        
+        return ASTNode.Module{
+            .name = name,
+            .declarations = try declarations.toOwnedSlice(),
+        };
+    }
+    
+    fn parseDeclaration(self: *Parser, allocator: std.mem.Allocator) !ASTNode.Declaration {
+        const doc_comment = self.captureDocComment();
+        
+        switch (self.peek().kind) {
+            lexer.TokenKind.KW_VAR => return self.parseVariableDecl(allocator, doc_comment),
+            lexer.TokenKind.KW_CONST => return self.parseConstantDecl(allocator, doc_comment),
+            lexer.TokenKind.KW_FUNCTION => return self.parseFunctionDecl(allocator, doc_comment),
+            lexer.TokenKind.KW_PROCEDURE => return self.parseProcedureDecl(allocator, doc_comment),
+            lexer.TokenKind.KW_TYPE => return self.parseTypeDecl(allocator, doc_comment),
+            lexer.TokenKind.KW_ACTOR => return self.parseActorDecl(allocator, doc_comment),
+            else => return error.UnexpectedToken,
+        }
+    }
+    
+    fn parseVariableDecl(self: *Parser, allocator: std.mem.Allocator, doc_comment: ?[]const u8) !ASTNode.Declaration {
+        self.expect(lexer.TokenKind.KW_VAR);
+        const name_token = self.expect(lexer.TokenKind.IDENTIFIER);
+        const name = name_token.text(self.tokens);
+        
+        var var_type: ?Type = null;
+        var init: ?Expression = null;
+        
+        if (self.peek().kind == lexer.TokenKind.OP_COLON) {
+            self.advance();
+            var_type = try self.parseType(allocator);
+        }
+        
+        if (self.peek().kind == lexer.TokenKind.OP_COLON_EQUALS or
+            self.peek().kind == lexer.TokenKind.OP_ASSIGN) {
+            self.advance();
+            init = try self.parseExpression(allocator);
+        }
+        
+        self.expect(lexer.TokenKind.OP_SEMICOLON);
+        
+        return ASTNode.Declaration{
+            .Variable = ASTNode.VariableDecl{
+                .name = name,
+                .type = var_type,
+                .init = init,
+                .mutability = .Immutable,
+                .ownership = .Own,
+            },
+        };
+    }
+    
+    fn parseFunctionDecl(self: *Parser, allocator: std.mem.Allocator, doc_comment: ?[]const u8) !ASTNode.Declaration {
+        var is_async = false;
+        var is_comptime = false;
+        
+        // Check for async keyword
+        if (self.peek().kind == lexer.TokenKind.KW_ASYNC) {
+            is_async = true;
+            self.advance();
+        }
+        
+        // Check for comptime attribute
+        if (self.peek().kind == lexer.TokenKind.KW_COMPTIME) {
+            is_comptime = true;
+            self.advance();
+        }
+        
+        self.expect(lexer.TokenKind.KW_FUNCTION);
+        const name_token = self.expect(lexer.TokenKind.IDENTIFIER);
+        const name = name_token.text(self.tokens);
+        
+        self.expect(lexer.TokenKind.OP_LPAREN);
+        var params = std.ArrayList(ASTNode.Parameter).init(allocator);
+        
+        if (self.peek().kind != lexer.TokenKind.OP_RPAREN) {
+            while (true) {
+                const param = try self.parseParameter(allocator);
+                try params.append(param);
+                if (self.peek().kind != lexer.TokenKind.OP_COMMA) break;
+                self.advance();
+            }
+        }
+        
+        self.expect(lexer.TokenKind.OP_RPAREN);
+        
+        var return_type: ?Type = null;
+        if (self.peek().kind == lexer.TokenKind.OP_COLON) {
+            self.advance();
+            return_type = try self.parseType(allocator);
+        }
+        
+        self.expect(lexer.TokenKind.KW_BEGIN);
+        const body = try self.parseBlock(allocator);
+        self.expect(lexer.TokenKind.KW_END);
+        
+        return ASTNode.Declaration{
+            .Function = ASTNode.FunctionDecl{
+                .name = name,
+                .parameters = try params.toOwnedSlice(),
+                .return_type = return_type,
+                .body = body,
+                .is_async = is_async,
+                .is_comptime = is_comptime,
+                .doc_comment = doc_comment,
+            },
+        };
+    }
+    
+    fn parseBlock(self: *Parser, allocator: std.mem.Allocator) !ASTNode.Block {
+        var statements = std.ArrayList(ASTNode.Statement).init(allocator);
+        
+        while (!self.isAtEnd()) {
+            self.skipWhitespace();
+            if (self.peek().kind == lexer.TokenKind.KW_END or
+                self.peek().kind == lexer.TokenKind.KW_ELSIF or
+                self.peek().kind == lexer.TokenKind.KW_ELSE) {
+                break;
+            }
+            const stmt = try self.parseStatement(allocator);
+            try statements.append(stmt);
+        }
+        
+        return ASTNode.Block{
+            .statements = try statements.toOwnedSlice(),
+        };
+    }
+    
+    fn parseExpression(self: *Parser, allocator: std.mem.Allocator) !Expression {
+        return self.parseLogicalOr(allocator);
+    }
+    
+    fn parseLogicalOr(self: *Parser, allocator: std.mem.Allocator) !Expression {
+        var left = try self.parseLogicalAnd(allocator);
+        
+        while (self.peek().kind == lexer.TokenKind.OP_OR) {
+            self.advance();
+            const right = try self.parseLogicalAnd(allocator);
+            left = Expression{
+                .Binary = BinaryExpr{
+                    .left = Box.create(left),
+                    .op = .Or,
+                    .right = Box.create(right),
+                },
+            };
+        }
+        
+        return left;
+    }
+    
+    // Additional parsing methods...
+    
+    fn expect(self: *Parser, kind: lexer.TokenKind) lexer.Token {
+        const tok = self.peek();
+        if (tok.kind != kind) {
+            @panic("Expected token");
+        }
+        self.advance();
+        return tok;
+    }
+    
+    fn peek(self: *Parser) lexer.Token {
+        return self.tokens[self.position];
+    }
+    
+    fn advance(self: *Parser) void {
+        if (self.position < self.tokens.len) {
+            self.position += 1;
+        }
+    }
+    
+    fn isAtEnd(self: *Parser) bool {
+        return self.position >= self.tokens.len or
+               self.peek().kind == lexer.TokenKind.EOF;
+    }
+    
+    fn skipWhitespace(self: *Parser) void {
+        while (!self.isAtEnd()) {
+            const tok = self.peek();
+            if (tok.kind != lexer.TokenKind.WHITESPACE and
+                tok.kind != lexer.TokenKind.COMMENT_REGULAR) {
+                break;
+            }
+            self.advance();
+        }
+    }
+    
+    fn skipWhitespaceAndDocs(self: *Parser) void {
+        while (!self.isAtEnd()) {
+            const tok = self.peek();
+            if (tok.kind == lexer.TokenKind.WHITESPACE or
+                tok.kind == lexer.TokenKind.COMMENT_REGULAR) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+    }
+    
+    fn captureDocComment(self: *Parser) ?[]const u8 {
+        const tok = self.peek();
+        if (tok.kind == lexer.TokenKind.COMMENT_DOC or
+            tok.kind == lexer.TokenKind.COMMENT_DOC_BLOCK) {
+            self.advance();
+            return tok.text(self.tokens);
+        }
+        return null;
+    }
+};
+```
+
+1.5 Phase 0 Deliverables
 
 ```yaml
-capabilities:
-  iso: {mutable: true, shareable: false, aliased: false, sendable: true}
-  trn: {mutable: true, shareable: false, aliased: true, sendable: false}
-  ref: {mutable: true, shareable: true, aliased: true, sendable: false}
-  val: {mutable: false, shareable: true, aliased: true, sendable: true}
-  box: {mutable: false, shareable: true, aliased: true, sendable: true}
-  tag: {mutable: false, shareable: true, aliased: true, sendable: true}
+phase_0_deliverables:
+  compiler:
+    name: maia-bootstrap
+    location: bootstrap/bin/maia
+    usage: "maia <input.maia> -o <output>"
+    
+  libraries:
+    - libmaia-core.a      # Core runtime
+    - libmaia-stdlib.a    # Standard library
+    - libmaia-concurrency.a  # Concurrency runtime
+    
+  tools:
+    - maia-fmt            # Code formatter
+    - maia-test           # Test runner
+    - maia-docs           # Documentation generator
+    
+  tests:
+    - unit_tests          # All pass
+    - integration_tests   # All pass
+    - self_test: "maia bootstrap/src/main.zig -o bootstrap.maia"
+    
+  documentation:
+    - language_reference.md
+    - stdlib_api.md
+    - compiler_internals.md
 ```
 
-2.4 Grammar (Maia)
-
-```ebnf
-(* Core syntax *)
-program         = { module }
-module          = "module" ident ";" { declaration }
-
-declaration     = var_decl | const_decl | func_decl | proc_decl | type_decl
-
-var_decl        = "var" ident { "," ident } ":" type [ "=" expr ]
-const_decl      = "const" ident ":" type "=" expr
-func_decl       = [ "async" ] "function" ident "(" [ params ] ")" ":" type [ ";" ] block
-proc_decl       = [ "async" ] "procedure" ident "(" [ params ] ")" [ ";" ] block
-type_decl       = "type" ident "=" type
-
-block           = "begin" { statement } "end"
-
-statement       = assignment | if_stmt | for_stmt | while_stmt | match_stmt
-                | return_stmt | defer_stmt | expr ";"
-
-assignment      = ident [ "[" expr "]" ] assign_op expr
-assign_op       = ":=" | "+=" | "-=" | "*=" | "/=" | "%="
-
-if_stmt         = "if" expr "then" block { "elsif" expr "then" block } [ "else" block ] "end"
-
-for_stmt        = "for" ident "in" range "do" block "end"
-                | "for" ident "," ident "in" expr "do" block "end"
-
-while_stmt      = "while" expr "do" block "end"
-
-match_stmt      = "match" expr "{" { match_case } "}"
-match_case      = pattern "=>" block ","
-
-return_stmt     = "return" [ expr ]
-
-defer_stmt      = "defer" expr
-
-(* Ownership *)
-type            = primitive_type | composite_type | qualified_type
-qualified_type  = [ "own" | "ref" | "mut" | "rc" | "weak" ] type
-
-(* Concurrency *)
-actor_decl      = "actor" ident "{" { behavior_decl | field_decl } "}"
-behavior_decl   = "behavior" ident "(" [ params ] ")" block
-channel_decl    = "channel(" type ")"
-spawn_stmt      = "spawn" expr
-await_expr      = "await" expr
-
-(* Safety *)
-safe_block      = "safe" "do" block "end"
-unsafe_block    = "unsafe" "do" block "end"
-
-(* FFI *)
-extern_decl     = "extern" string_literal function_decl
-link_attr       = "@link(" string_literal [ "," "static:" bool ] ")"
-export_attr     = "@export(" string_literal [ "," "name:" string_literal ] ")"
-
-(* Comptime *)
-comptime_attr   = "@comptime"
-comptime_func   = "@comptime" function_decl
-comptime_if     = "if" "@comptime(" expr ")" then block "else" block "end"
-```
-
-2.5 Built-in Functions (Maia)
+1.6 Phase 0 Success Criteria
 
 ```yaml
-memory:
-  alloc: "alloc(T, count) -> []T"
-  free: "free(ptr)"
-  create: "create(T) -> *T"
-  destroy: "destroy(ptr)"
-
-concurrency:
-  spawn: "spawn(async_fn) -> Task"
-  wait: "wait(task)"
-  channel_create: "channel(T, buffer_size) -> Channel(T)"
-
-io:
-  writeln: "writeln(args...)"
-  readln: "readln() -> string"
-  print: "print(args...)"
-
-type_info:
-  size_of: "size_of(T) -> usize"
-  align_of: "align_of(T) -> usize"
-  type_name: "type_name(T) -> string"
-  type_id: "type_id(T) -> u64"
-
-safety:
-  assert: "assert(condition, message?)"
-  unreachable: "unreachable()"
-  compile_error: "compile_error(message)"
+phase_0_success:
+  - all_language_features_implemented: true
+  - all_tests_pass: true
+  - can_compile_itself: false  # Phase 1 goal
+  - produces_correct_output: true
+  - performance_within_2x_of_zig: true
+  - no_memory_leaks: true
+  - thread_safe: true
 ```
 
 ---
 
-Part 3: Koda Specification
+Part 2: Phase 1 - Self-Hosted Compiler (MaiaKoda)
 
-3.1 Koda-Specific Features
-
-```yaml
-modes:
-  embedded: runs_inside_maia_vm
-  standalone: executed_by_koda_shell
-
-shell_features:
-  job_control: [fg, bg, jobs]
-  pipelines: "cmd1 | cmd2 | cmd3"
-  redirection: [>, >>, <, 2>, &>]
-  background: "cmd &"
-
-web_framework:
-  server: native_http_1_1_and_2
-  routing: pattern_matching_with_params
-  middleware: chainable_async
-  websocket: full_duplex
-  templates: builtin_engine
-  orm: postgres_mysql_sqlite
-  graphql: builtin_resolver
-```
-
-3.2 Koda Grammar
-
-```ebnf
-(* Koda extensions *)
-async_func      = "async" "function" ident "(" [ params ] ")" ":" type block
-await_expr      = "await" expr
-
-task_spawn      = "spawn" expr
-task_await      = "await" expr
-task_await_all  = "await_all(" expr ")"
-task_await_any  = "await_any(" expr ")"
-
-template        = "Template.create(" string_literal ")"
-template_render = template ".render(" table_literal ")"
-
-web_server      = "Web.Server.create(" [ config ] ")"
-web_route       = server ".get/post/put/delete(" string_literal "," handler ")"
-web_middleware  = "app.use(" middleware_fn ")"
-web_listen      = "app.listen(" port ")"
-
-vcs_operation   = "Git.clone(" url "," path ")"
-                | "repo.checkout(" ref ")"
-                | "repo.pull()"
-                | "repo.get_current_commit()"
-
-build_task      = "task(" string_literal "," [ depends: [string] ] "," fn ")"
-build_exec      = "exec(" cmd "," [ args ] ")"
-build_parallel  = "parallel {" { task_call } "}"
-```
-
-3.3 Koda Built-in Modules
+2.1 Goals
 
 ```yaml
-modules:
-  Koda.Async: [async, await, spawn, sleep, Task, await_all, await_any]
-  Koda.Template: [Template, render, include, extend, block, filter, function]
-  Koda.Web: [Server, Request, Response, Route, Middleware, WebSocket, SSE]
-  Koda.Web.Router: [Router, group, resource, param, validate]
-  Koda.Web.Auth: [JWT, OAuth, Session, Role, Permission]
-  Koda.Web.ORM: [Model, Query, Transaction, Migration]
-  Koda.Web.GraphQL: [Schema, Query, Mutation, Subscription, Resolver]
-  Koda.VCS: [Git, Hg, Svn, Repo, clone, pull, checkout, commit]
-  Koda.Build: [Task, exec, parallel, cache, container, matrix]
-  Koda.Config: [load, save, convert, parse, TOML, JSON, YAML, XML]
-  Koda.TOML: [parse, stringify, from_json, to_json]
-  Koda.JSON: [parse, stringify]
-  Koda.Shell: [exec, pipe, job, fg, bg, jobs, cd, pwd, ls, cat, grep]
-  Koda.FS: [read, write, open, close, stat, mkdir, rmdir, walk, watch]
-  Koda.Test: [test, assert, describe, it, before, after, mock, client]
+phase_1_goals:
+  - rewrite_bootstrap_in_maiakoda: true
+  - compiler_100_percent_maiakoda: true
+  - self_hosting: true
+  - bootstrap_compiler_deprecated: true
+  - feature_parity_with_bootstrap: true
 ```
 
----
+2.2 Self-Hosted Architecture
 
-Part 4: FFI Specifications
-
-4.1 C FFI
-
-```yaml
-syntax: 'extern "C" function name(params): return_type'
-linking: '@link("library_name")'
-types: 
-  mapping: 
-    C_int: i32
-    C_char: u8
-    C_void: *opaque
-    C_string: *u8
-    C_struct: 'extern "C" struct { fields }'
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                 Phase 1: Self-Hosted Compiler (MaiaKoda)                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     Bootstrap Compiler (Zig)                     │   │
+│  │                          Phase 0 Output                          │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    │ Compiles                           │
+│                                    ▼                                    │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   Stage 1 Compiler (MaiaKoda)                    │   │
+│  │                     Written in MaiaKoda                          │   │
+│  │                  Compiled by Bootstrap Compiler                  │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    │ Compiles                           │
+│                                    ▼                                    │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   Stage 2 Compiler (MaiaKoda)                    │   │
+│  │                     Written in MaiaKoda                          │   │
+│  │                   Compiled by Stage 1 Compiler                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    │ Verify (byte-for-byte identical)  │
+│                                    ▼                                    │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    Self-Hosted Complete                          │   │
+│  │              Bootstrap compiler no longer needed                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-4.2 C++ FFI
+2.3 Self-Hosted File Structure
 
-```yaml
-syntax: 'extern "C++" type ClassName = struct { methods }'
-methods: 'function name(params): return_type'
-construction: 'ClassName.create(args) -> own ClassName'
-destruction: 'obj.destroy()'
+```
+compiler/
+├── src/
+│   ├── main.maia            # Compiler entry point
+│   ├── lexer.maia           # Tokenization
+│   ├── parser.maia          # AST construction
+│   ├── ast.maia             # AST node definitions
+│   ├── sema.maia            # Semantic analysis
+│   ├── ir.maia              # Intermediate representation
+│   ├── optimizer.maia       # Optimization passes
+│   ├── codegen/
+│   │   ├── x86_64.maia      # x86_64 code generation
+│   │   ├── arm64.maia       # ARM64 code generation
+│   │   ├── riscv64.maia     # RISC-V code generation
+│   │   └── wasm32.maia      # WebAssembly code generation
+│   ├── assembler/
+│   │   ├── x86_64.maia      # x86_64 assembler
+│   │   ├── arm64.maia       # ARM64 assembler
+│   │   └── riscv64.maia     # RISC-V assembler
+│   ├── linker.maia          # ELF/Mach-O/PE linking
+│   └── runtime.maia         # Runtime library
+├── lib/
+│   ├── core.maia            # Core library
+│   ├── stdlib.maia          # Standard library
+│   ├── concurrency.maia     # Concurrency library
+│   └── posix.maia           # POSIX compliance layer
+├── tests/
+│   ├── lexer_tests.maia
+│   ├── parser_tests.maia
+│   ├── sema_tests.maia
+│   ├── codegen_tests.maia
+│   └── integration_tests.maia
+├── docs/
+│   ├── api/
+│   │   ├── compiler.md
+│   │   ├── stdlib.md
+│   │   └── runtime.md
+│   └── internals/
+│       ├── ir.md
+│       ├── codegen.md
+│       └── optimizer.md
+├── maia.toml                # Project configuration
+├── build.koda               # Build script
+└── README.md                # Documentation
 ```
 
-4.3 Rust FFI
+2.4 Self-Hosted Compiler Implementation (MaiaKoda)
 
-```yaml
-syntax: 'extern "Rust" function name(params): return_type'
-ownership: 
-  Rust_String: own RustString
-  Rust_Vec: own RustVec(T)
-  slice: '&[T]' -> '[]T'
-```
-
-4.4 Zig FFI
-
-```yaml
-syntax: 'extern "Zig" function name(params): return_type'
-allocator: 'ZigAllocator.wrap(maia_allocator) -> *opaque'
-comptime: zig_comptime_functions_available
-```
-
-4.5 Pony FFI
-
-```yaml
-syntax: 'extern "Pony" function name(params): return_type'
-capabilities: 
-  iso -> own
-  ref -> ref
-  val -> val
-  tag -> tag
-actors: pony_actor_tag_reference
-```
-
-4.6 Java FFI (JNI)
-
-```yaml
-syntax: 'extern "Java" function name(params): return_type'
-jvm_init: 'JNI_CreateJavaVM(vm, env, args)'
-class_find: 'jni_find_class(env, name) -> JClass'
-method_call: 'jni_call_static_int(env, cls, method, args)'
-```
-
-4.7 Python FFI
-
-```yaml
-syntax: 'extern "Python" function name(params): return_type'
-python_init: 'Py_Initialize()'
-import: 'PyImport_ImportModule(name) -> *PyObject'
-call: 'PyObject_CallObject(obj, args) -> *PyObject'
-convert: 
-  PyLong -> i64
-  PyFloat -> f64
-  PyUnicode -> string
-  PyBytes -> []u8
-```
-
-4.8 Objective-C FFI
-
-```yaml
-syntax: 'extern "ObjectiveC" function name(params): return_type'
-runtime: 'objc_msgSend(obj, sel, args)'
-class: 'objc_getClass(name) -> *objc_class'
-selector: 'sel_registerName(name) -> *objc_selector'
-frameworks: [Foundation, AppKit, UIKit]
-```
-
----
-
-Part 5: Configuration Specification
-
-5.1 TOML Schema (maia.toml)
-
-```yaml
-schema:
-  project:
-    required: [name, version]
-    optional: [authors, license, description, repository, documentation]
-  
-  project.dependencies:
-    type: table
-    pattern: "^[a-z][a-z0-9_-]*$"
-    properties:
-      version: string
-      source: enum: [crates, git, local, path]
-      git: string
-      branch: string
-      tag: string
-      path: string
-  
-  build:
-    optional: true
-    properties:
-      optimization: enum: [debug, release, size]
-      safety: enum: [full, release, os, none]
-      target: string
-      jobs: integer
-      verbose: boolean
-  
-  build.safety.checks:
-    properties:
-      bounds: boolean
-      overflow: boolean
-      division_zero: boolean
-      shift: boolean
-      enum_cast: boolean
-  
-  build.cache:
-    properties:
-      enabled: boolean
-      directory: string
-      remote: string
-      compress: boolean
-  
-  project.ci:
-    properties:
-      enabled: boolean
-      provider: enum: [github-actions, gitlab-ci, circle-ci]
-```
-
-5.2 Package Manifest (package.toml)
-
-```yaml
-schema:
-  package:
-    required: [name, version]
-    optional: [authors, license, edition, description, homepage, repository, documentation, keywords, categories]
-  
-  package.dependencies:
-    type: table
-    pattern: "^[a-z][a-z0-9_-]*$"
-    properties:
-      version: string
-      source: enum: [crates, git, local]
-      git: string
-      branch: string
-      tag: string
-      path: string
-  
-  package.target-dependencies:
-    properties:
-      windows: {dependencies: table}
-      linux: {dependencies: table}
-      macos: {dependencies: table}
-  
-  package.profiles:
-    properties:
-      debug: {optimization: enum, debug: boolean, safety: enum}
-      release: {optimization: enum, debug: boolean, safety: enum}
-      size: {optimization: enum, debug: boolean, safety: enum}
-  
-  package.test:
-    properties:
-      unit: {paths: [string]}
-      integration: {paths: [string]}
-      coverage: boolean
-      timeout: integer
-  
-  package.docs:
-    properties:
-      generate: boolean
-      theme: string
-      output: string
-      features: [string]
-      examples: boolean
-```
-
----
-
-Part 6: Target Specifications
-
-6.1 Backends
-
-```yaml
-x86_64:
-  os: [linux, macos, windows, freebsd, openbsd]
-  features: [sse, avx, avx2, avx512]
-  output: [elf, mach_o, pe]
-  assembler: nasm_syntax
-
-arm64:
-  os: [linux, macos, windows, freebsd]
-  features: [neon, sve, crypto]
-  output: [elf, mach_o, pe]
-
-riscv64:
-  os: [linux]
-  extensions: [g, c, v]
-  output: [elf]
-
-wasm32:
-  features: [simd, threads, bulk_memory, reference_types]
-  output: [wasm]
-  wasi: preview2
-```
-
-6.2 Target Triples
-
-```yaml
-format: "<arch>-<vendor>-<os>-<abi>"
-
-examples:
-  - x86_64-unknown-linux-gnu
-  - x86_64-apple-darwin
-  - x86_64-pc-windows-msvc
-  - aarch64-unknown-linux-musl
-  - aarch64-apple-darwin
-  - riscv64gc-unknown-linux-gnu
-  - wasm32-unknown-unknown
-  - wasm32-wasi-preview2
-```
-
----
-
-Part 7: Versioning Specification
-
-7.1 Version Format
-
-```yaml
-format: "major.minor.development"
-major: breaking_changes
-minor: 
-  0: pre_alpha
-  1: alpha
-  2: beta
-  3: release_candidate
-  4+: stable
-development: 
-  pre_alpha: 1-99
-  alpha: 1-99
-  beta: 1-99
-  rc: 1-99
-  stable: 0
-  patch: 1-99
-```
-
-7.2 Version Rules
-
-```yaml
-compatibility:
-  same_major: compatible
-  major_increase: breaking
-  minor_increase:
-    from_0_to_1: alpha
-    from_1_to_2: beta
-    from_2_to_3: rc
-    from_3_to_4: stable
-  development_increase: bug_fixes_only
-```
-
----
-
-Part 8: Safety Specification
-
-8.1 Safety Levels
-
-```yaml
-full:
-  bounds: true
-  overflow: true
-  use_after_free: true
-  leak_detection: compile_time
-  null: true
-  shift: true
-  division_zero: true
-
-release:
-  bounds: true
-  overflow: true
-  use_after_free: false
-  leak_detection: none
-  null: true
-  shift: true
-  division_zero: true
-
-os:
-  bounds: true
-  overflow: false
-  use_after_free: false
-  leak_detection: none
-  null: false
-  shift: false
-  division_zero: false
-
-none:
-  bounds: false
-  overflow: false
-  use_after_free: false
-  leak_detection: none
-  null: false
-  shift: false
-  division_zero: false
-```
-
-8.2 Unsafe Operations
-
-```yaml
-unsafe_allowed:
-  - dereference_raw_pointer
-  - inline_assembly
-  - call_extern_function
-  - disable_bounds_checking
-  - disable_overflow_checking
-  - type_punning
-  - union_access
-  - mutable_static
-```
-
----
-
-Part 9: Documentation Specification
-
-9.1 Documentation Comments
-
-```yaml
-syntax:
-  summary: "/// text"
-  param: "/// @param name description"
-  return: "/// @return description"
-  example: "/// @example\n/// ```pascal\n/// code\n/// ```"
-  see: "/// @see reference"
-  deprecated: "/// @deprecated reason"
-  since: "/// @since version"
-```
-
-9.2 Generated Documentation
-
-```yaml
-format: markdown
-structure:
-  - index.md
-  - api/
-    - module_name.md
-    - type_name.md
-    - function_name.md
-  - examples/
-    - example_name.md
-  - changelog.md
-```
-
----
-
-Part 10: Tooling Specification
-
-10.1 Compiler Commands
-
-```yaml
-commands:
-  build: "maia build [options]"
-  test: "maia test [options]"
-  run: "maia run [file] [args]"
-  fmt: "maia fmt [files]"
-  lint: "maia lint [files]"
-  docs: "maia docs [options]"
-  init: "maia init [name]"
-  add: "maia add dependency [version]"
-  publish: "maia publish [options]"
-  version: "maia version [bump]"
-  config: "maia config [subcommand]"
-```
-
-10.2 Koda Commands
-
-```yaml
-commands:
-  shell: "koda [interactive]"
-  run: "koda run [script] [args]"
-  repl: "koda repl"
-  test: "koda test [files]"
-  fmt: "koda fmt [files]"
-  lint: "koda lint [files]"
-  serve: "koda serve [port]"
-```
-
----
-
-Part 11: Code Examples for AI Training
-
-11.1 Maia Examples
+2.4.1 Main Entry Point (Maia)
 
 ```pascal
-// Example 1: Hello World
-module Main;
+/* compiler/src/main.maia
+   Self-hosted MaiaKoda compiler entry point
+*/
 
-procedure main()
+module Main
+
+use System.Args
+use System.FS
+use System.Memory
+use Compiler.Lexer
+use Compiler.Parser
+use Compiler.Sema
+use Compiler.CodeGen
+
+/* 
+   Main compiler entry point
+   @param argc Number of command line arguments
+   @param argv Array of argument strings
+   @param envp Environment variables
+   @return Exit code (0 = success)
+*/
+procedure main(argc: i32, argv: **u8, envp: **u8): i32
 begin
-    writeln("Hello, Maia!")
-end
-
-// Example 2: Ownership and Borrowing
-module Ownership;
-
-procedure example()
-begin
-    var a: own string := "hello"
-    var b: ref string := &a
-    var c: mut string := &mut a
+    /* Parse command line arguments */
+    var args := Args.parse(argc, argv)
     
-    writeln(b)  // immutable borrow
-    c := "world"  // mutable borrow
-    // a is now "world"
-end
-
-// Example 3: Actor Concurrency
-actor Counter {
-    var _count: iso int32 := 0
-    
-    behavior increment()
-    begin
-        _count += 1
+    if args.help then
+        print_help()
+        return 0
     end
     
-    function get(): val int32
+    if args.version then
+        print_version()
+        return 0
+    end
+    
+    /* Validate input file */
+    if args.input_file == null then
+        writeln(stderr, "Error: No input file specified")
+        print_usage()
+        return 1
+    end
+    
+    /* Read source file */
+    var source := FS.read_file(args.input_file)
+    if source == null then
+        writeln(stderr, "Error: Cannot read file: ", args.input_file)
+        return 1
+    end
+    defer Memory.free(source)
+    
+    /* Run compiler phases */
+    var lexer := Lexer.create(source)
+    var tokens := lexer.tokenize()
+    defer tokens.destroy()
+    
+    var parser := Parser.create(tokens)
+    var ast := parser.parse()
+    defer ast.destroy()
+    
+    var sema := Sema.create(ast)
+    if !sema.analyze() then
+        sema.print_errors()
+        return 1
+    end
+    
+    var codegen := CodeGen.create(ast, args.target, args.optimization)
+    var output := codegen.generate()
+    
+    /* Write output file */
+    var out_path := args.output_file ?? "a.out"
+    var result := FS.write_file(out_path, output)
+    
+    if !result then
+        writeln(stderr, "Error: Cannot write output file: ", out_path)
+        return 1
+    end
+    
+    return 0
+end
+
+/* Print compiler usage information */
+procedure print_usage()
+begin
+    writeln("Usage: maia [options] <input.maia>")
+    writeln()
+    writeln("Options:")
+    writeln("  -o <file>    Output file name")
+    writeln("  --target     Target triple (x86_64, arm64, riscv64, wasm32)")
+    writeln("  --opt        Optimization level (debug, release, size)")
+    writeln("  --safety     Safety level (full, release, os, none)")
+    writeln("  --help       Print this help message")
+    writeln("  --version    Print version information")
+end
+
+/* Print compiler version */
+procedure print_version()
+begin
+    writeln("MaiaKoda Compiler v1.0.0")
+    writeln("Copyright (c) 2026 Purging Light Technologies")
+    writeln("License: MIT")
+end
+```
+
+2.4.2 Lexer (Maia)
+
+```pascal
+/* compiler/src/lexer.maia - Tokenization module */
+module Compiler.Lexer
+
+export type TokenKind = enum {
+    /* Keywords */
+    KW_MODULE, KW_USE, KW_EXPORT,
+    KW_VAR, KW_CONST,
+    KW_FUNCTION, KW_PROCEDURE,
+    KW_TYPE, KW_STRUCT, KW_ENUM,
+    KW_BEGIN, KW_END,
+    KW_IF, KW_THEN, KW_ELSIF, KW_ELSE,
+    KW_FOR, KW_WHILE, KW_DO, KW_LOOP,
+    KW_BREAK, KW_CONTINUE,
+    KW_RETURN, KW_MATCH,
+    KW_AS, KW_NULL, KW_TRUE, KW_FALSE,
+    KW_OWN, KW_REF, KW_MUT, KW_RC, KW_WEAK,
+    KW_ISO, KW_TRN, KW_VAL, KW_BOX, KW_TAG,
+    KW_ACTOR, KW_BEHAVIOR,
+    KW_SPAWN, KW_AWAIT, KW_ASYNC,
+    KW_DEFER, KW_UNSAFE, KW_SAFE,
+    
+    /* Operators */
+    OP_PLUS, OP_MINUS, OP_STAR, OP_SLASH, OP_PERCENT, OP_DOUBLE_SLASH,
+    OP_ASSIGN, OP_COLON_EQUALS,
+    OP_PLUS_EQUALS, OP_MINUS_EQUALS, OP_STAR_EQUALS,
+    OP_SLASH_EQUALS, OP_PERCENT_EQUALS,
+    OP_EQUALS_EQUALS, OP_NOT_EQUALS,
+    OP_LESS, OP_GREATER, OP_LESS_EQUALS, OP_GREATER_EQUALS,
+    OP_AND, OP_OR, OP_NOT,
+    OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR, OP_BIT_NOT,
+    OP_SHIFT_LEFT, OP_SHIFT_RIGHT,
+    OP_RANGE, OP_ARROW,
+    OP_DOT, OP_COMMA, OP_SEMICOLON, OP_COLON,
+    OP_LPAREN, OP_RPAREN,
+    OP_LBRACKET, OP_RBRACKET,
+    OP_LBRACE, OP_RBRACE,
+    
+    /* Literals */
+    LIT_INTEGER, LIT_FLOAT, LIT_STRING, LIT_CHAR,
+    
+    /* Other */
+    IDENTIFIER,
+    COMMENT_REGULAR, COMMENT_DOC, COMMENT_DOC_BLOCK,
+    WHITESPACE,
+    ERROR,
+    EOF,
+}
+
+export type Token = struct {
+    kind: TokenKind,
+    start: usize,
+    end: usize,
+    line: u32,
+    column: u32,
+}
+
+export type Lexer = struct {
+    source: []u8,
+    position: usize,
+    line: u32,
+    column: u32,
+}
+
+impl Lexer {
+    /* Create a new lexer */
+    function create(source: []u8): own Lexer
     begin
-        return _count as val
+        return Lexer {
+            .source = source,
+            .position = 0,
+            .line = 1,
+            .column = 1,
+        }
+    end
+    
+    /* Tokenize the entire source */
+    function tokenize(self: *Lexer): own []Token
+    begin
+        var tokens := array(Token).create()
+        
+        while true do
+            var tok := self.next_token()
+            tokens.append(tok)
+            if tok.kind == TokenKind.EOF then
+                break
+            end
+        end
+        
+        return consume tokens
+    end
+    
+    /* Get the next token */
+    function next_token(self: *Lexer): Token
+    begin
+        self.skip_whitespace()
+        
+        if self.position >= self.source.len() then
+            return Token {
+                .kind = TokenKind.EOF,
+                .start = self.position,
+                .end = self.position,
+                .line = self.line,
+                .column = self.column,
+            }
+        end
+        
+        var c := self.source[self.position]
+        var start := self.position
+        var line := self.line
+        var col := self.column
+        
+        /* Identifiers and keywords */
+        if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' then
+            return self.read_identifier(start, line, col)
+        end
+        
+        /* Numbers */
+        if c >= '0' and c <= '9' then
+            return self.read_number(start, line, col)
+        end
+        
+        /* Strings */
+        if c == '"' then
+            return self.read_string(start, line, col)
+        end
+        
+        /* Characters */
+        if c == '\'' then
+            return self.read_char(start, line, col)
+        end
+        
+        /* Comments */
+        if c == '/' then
+            if self.peek() == '*' then
+                return self.read_regular_comment(start, line, col)
+            end
+            if self.peek() == '/' then
+                if self.peek_offset(2) == '/' then
+                    return self.read_doc_comment_block(start, line, col)
+                end
+                return self.read_doc_comment(start, line, col)
+            end
+        end
+        
+        /* Operators and punctuation */
+        return self.read_operator(start, line, col)
+    end
+    
+    /* Read an identifier or keyword */
+    function read_identifier(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        while self.position < self.source.len() do
+            var c := self.source[self.position]
+            var is_alnum := (c >= 'a' and c <= 'z') or
+                           (c >= 'A' and c <= 'Z') or
+                           (c >= '0' and c <= '9') or
+                           c == '_'
+            if !is_alnum then
+                break
+            end
+            self.position += 1
+            self.column += 1
+        end
+        
+        var text := self.source[start..self.position]
+        var kind := self.keyword_to_kind(text) ?? TokenKind.IDENTIFIER
+        
+        return Token {
+            .kind = kind,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Read a numeric literal */
+    function read_number(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        var is_float := false
+        
+        while self.position < self.source.len() do
+            var c := self.source[self.position]
+            if c >= '0' and c <= '9' then
+                self.position += 1
+                self.column += 1
+            elseif c == '.' and !is_float then
+                is_float = true
+                self.position += 1
+                self.column += 1
+            else
+                break
+            end
+        end
+        
+        var kind := if is_float then TokenKind.LIT_FLOAT else TokenKind.LIT_INTEGER
+        
+        return Token {
+            .kind = kind,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Read a string literal */
+    function read_string(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        self.position += 1  /* Skip opening " */
+        self.column += 1
+        
+        while self.position < self.source.len() do
+            var c := self.source[self.position]
+            if c == '"' then
+                self.position += 1
+                self.column += 1
+                break
+            end
+            if c == '\\' then
+                self.position += 2
+                self.column += 2
+            else
+                if c == '\n' then
+                    self.line += 1
+                    self.column = 1
+                else
+                    self.column += 1
+                end
+                self.position += 1
+            end
+        end
+        
+        return Token {
+            .kind = TokenKind.LIT_STRING,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Read a character literal */
+    function read_char(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        self.position += 1  /* Skip opening ' */
+        self.column += 1
+        
+        if self.position < self.source.len() then
+            if self.source[self.position] == '\\' then
+                self.position += 2
+                self.column += 2
+            else
+                self.position += 1
+                self.column += 1
+            end
+        end
+        
+        if self.position < self.source.len() and self.source[self.position] == '\'' then
+            self.position += 1
+            self.column += 1
+        end
+        
+        return Token {
+            .kind = TokenKind.LIT_CHAR,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Read a regular comment /* ... */ */
+    function read_regular_comment(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        self.position += 2  /* Skip /* */
+        var depth: u32 = 1
+        
+        while depth > 0 and self.position < self.source.len() do
+            if self.position + 1 < self.source.len() and
+               self.source[self.position] == '/' and
+               self.source[self.position + 1] == '*' then
+                depth += 1
+                self.position += 2
+            elseif self.position + 1 < self.source.len() and
+                   self.source[self.position] == '*' and
+                   self.source[self.position + 1] == '/' then
+                depth -= 1
+                self.position += 2
+            else
+                if self.source[self.position] == '\n' then
+                    self.line += 1
+                    self.column = 1
+                else
+                    self.column += 1
+                end
+                self.position += 1
+            end
+        end
+        
+        return Token {
+            .kind = TokenKind.COMMENT_REGULAR,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Read a documentation comment /// ... */
+    function read_doc_comment(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        self.position += 3  /* Skip /// */
+        
+        while self.position < self.source.len() do
+            var c := self.source[self.position]
+            if c == '\n' then
+                break
+            end
+            self.position += 1
+            self.column += 1
+        end
+        
+        return Token {
+            .kind = TokenKind.COMMENT_DOC,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Read a block documentation comment */
+    function read_doc_comment_block(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        self.position += 3  /* Skip /// */
+        
+        /* Read first line */
+        while self.position < self.source.len() do
+            var c := self.source[self.position]
+            if c == '\n' then
+                self.position += 1
+                self.line += 1
+                self.column = 1
+                break
+            end
+            self.position += 1
+            self.column += 1
+        end
+        
+        /* Read subsequent lines starting with /// */
+        while self.position + 2 < self.source.len() and
+              self.source[self.position] == '/' and
+              self.source[self.position + 1] == '/' and
+              self.source[self.position + 2] == '/' do
+            self.position += 3
+            self.column += 3
+            
+            while self.position < self.source.len() do
+                var c := self.source[self.position]
+                if c == '\n' then
+                    self.position += 1
+                    self.line += 1
+                    self.column = 1
+                    break
+                end
+                self.position += 1
+                self.column += 1
+            end
+        end
+        
+        return Token {
+            .kind = TokenKind.COMMENT_DOC_BLOCK,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Read an operator or punctuation */
+    function read_operator(self: *Lexer, start: usize, line: u32, col: u32): Token
+    begin
+        var c := self.source[self.position]
+        self.position += 1
+        self.column += 1
+        
+        /* Two-character operators */
+        if self.position < self.source.len() then
+            var next := self.source[self.position]
+            var two_char := [c, next]
+            
+            var kind := self.two_char_to_kind(two_char)
+            if kind != null then
+                self.position += 1
+                self.column += 1
+                return Token {
+                    .kind = kind,
+                    .start = start,
+                    .end = self.position,
+                    .line = line,
+                    .column = col,
+                }
+            end
+        end
+        
+        /* Single-character operators */
+        var kind := self.single_char_to_kind(c) ?? TokenKind.ERROR
+        
+        return Token {
+            .kind = kind,
+            .start = start,
+            .end = self.position,
+            .line = line,
+            .column = col,
+        }
+    end
+    
+    /* Skip whitespace characters */
+    function skip_whitespace(self: *Lexer)
+    begin
+        while self.position < self.source.len() do
+            var c := self.source[self.position]
+            if c == ' ' or c == '\t' then
+                self.position += 1
+                self.column += 1
+            elseif c == '\n' then
+                self.position += 1
+                self.line += 1
+                self.column = 1
+            else
+                break
+            end
+        end
+    end
+    
+    /* Peek at the next character */
+    function peek(self: *Lexer): u8
+    begin
+        if self.position + 1 < self.source.len() then
+            return self.source[self.position + 1]
+        end
+        return 0
+    end
+    
+    /* Peek at a character with offset */
+    function peek_offset(self: *Lexer, offset: usize): u8
+    begin
+        if self.position + offset < self.source.len() then
+            return self.source[self.position + offset]
+        end
+        return 0
+    end
+    
+    /* Convert keyword text to TokenKind */
+    function keyword_to_kind(self: *Lexer, text: []u8): ?TokenKind
+    begin
+        match text {
+            "module" => return TokenKind.KW_MODULE,
+            "use" => return TokenKind.KW_USE,
+            "export" => return TokenKind.KW_EXPORT,
+            "var" => return TokenKind.KW_VAR,
+            "const" => return TokenKind.KW_CONST,
+            "function" => return TokenKind.KW_FUNCTION,
+            "procedure" => return TokenKind.KW_PROCEDURE,
+            "type" => return TokenKind.KW_TYPE,
+            "struct" => return TokenKind.KW_STRUCT,
+            "enum" => return TokenKind.KW_ENUM,
+            "begin" => return TokenKind.KW_BEGIN,
+            "end" => return TokenKind.KW_END,
+            "if" => return TokenKind.KW_IF,
+            "then" => return TokenKind.KW_THEN,
+            "elsif" => return TokenKind.KW_ELSIF,
+            "else" => return TokenKind.KW_ELSE,
+            "for" => return TokenKind.KW_FOR,
+            "while" => return TokenKind.KW_WHILE,
+            "do" => return TokenKind.KW_DO,
+            "loop" => return TokenKind.KW_LOOP,
+            "break" => return TokenKind.KW_BREAK,
+            "continue" => return TokenKind.KW_CONTINUE,
+            "return" => return TokenKind.KW_RETURN,
+            "match" => return TokenKind.KW_MATCH,
+            "as" => return TokenKind.KW_AS,
+            "null" => return TokenKind.KW_NULL,
+            "true" => return TokenKind.KW_TRUE,
+            "false" => return TokenKind.KW_FALSE,
+            "own" => return TokenKind.KW_OWN,
+            "ref" => return TokenKind.KW_REF,
+            "mut" => return TokenKind.KW_MUT,
+            "rc" => return TokenKind.KW_RC,
+            "weak" => return TokenKind.KW_WEAK,
+            "iso" => return TokenKind.KW_ISO,
+            "trn" => return TokenKind.KW_TRN,
+            "val" => return TokenKind.KW_VAL,
+            "box" => return TokenKind.KW_BOX,
+            "tag" => return TokenKind.KW_TAG,
+            "actor" => return TokenKind.KW_ACTOR,
+            "behavior" => return TokenKind.KW_BEHAVIOR,
+            "spawn" => return TokenKind.KW_SPAWN,
+            "await" => return TokenKind.KW_AWAIT,
+            "async" => return TokenKind.KW_ASYNC,
+            "defer" => return TokenKind.KW_DEFER,
+            "unsafe" => return TokenKind.KW_UNSAFE,
+            "safe" => return TokenKind.KW_SAFE,
+            else => return null,
+        }
+    end
+    
+    /* Convert single character to TokenKind */
+    function single_char_to_kind(self: *Lexer, c: u8): ?TokenKind
+    begin
+        match c {
+            '+' => return TokenKind.OP_PLUS,
+            '-' => return TokenKind.OP_MINUS,
+            '*' => return TokenKind.OP_STAR,
+            '/' => return TokenKind.OP_SLASH,
+            '%' => return TokenKind.OP_PERCENT,
+            '=' => return TokenKind.OP_ASSIGN,
+            '<' => return TokenKind.OP_LESS,
+            '>' => return TokenKind.OP_GREATER,
+            '&' => return TokenKind.OP_BIT_AND,
+            '|' => return TokenKind.OP_BIT_OR,
+            '^' => return TokenKind.OP_BIT_XOR,
+            '~' => return TokenKind.OP_BIT_NOT,
+            '.' => return TokenKind.OP_DOT,
+            ',' => return TokenKind.OP_COMMA,
+            ';' => return TokenKind.OP_SEMICOLON,
+            ':' => return TokenKind.OP_COLON,
+            '(' => return TokenKind.OP_LPAREN,
+            ')' => return TokenKind.OP_RPAREN,
+            '[' => return TokenKind.OP_LBRACKET,
+            ']' => return TokenKind.OP_RBRACKET,
+            '{' => return TokenKind.OP_LBRACE,
+            '}' => return TokenKind.OP_RBRACE,
+            else => return null,
+        }
+    end
+    
+    /* Convert two characters to TokenKind */
+    function two_char_to_kind(self: *Lexer, chars: [2]u8): ?TokenKind
+    begin
+        if chars[0] == ':' and chars[1] == '=' then
+            return TokenKind.OP_COLON_EQUALS
+        elseif chars[0] == '+' and chars[1] == '=' then
+            return TokenKind.OP_PLUS_EQUALS
+        elseif chars[0] == '-' and chars[1] == '=' then
+            return TokenKind.OP_MINUS_EQUALS
+        elseif chars[0] == '*' and chars[1] == '=' then
+            return TokenKind.OP_STAR_EQUALS
+        elseif chars[0] == '/' and chars[1] == '=' then
+            return TokenKind.OP_SLASH_EQUALS
+        elseif chars[0] == '%' and chars[1] == '=' then
+            return TokenKind.OP_PERCENT_EQUALS
+        elseif chars[0] == '=' and chars[1] == '=' then
+            return TokenKind.OP_EQUALS_EQUALS
+        elseif chars[0] == '!' and chars[1] == '=' then
+            return TokenKind.OP_NOT_EQUALS
+        elseif chars[0] == '<' and chars[1] == '=' then
+            return TokenKind.OP_LESS_EQUALS
+        elseif chars[0] == '>' and chars[1] == '=' then
+            return TokenKind.OP_GREATER_EQUALS
+        elseif chars[0] == '&' and chars[1] == '&' then
+            return TokenKind.OP_AND
+        elseif chars[0] == '|' and chars[1] == '|' then
+            return TokenKind.OP_OR
+        elseif chars[0] == '<' and chars[1] == '<' then
+            return TokenKind.OP_SHIFT_LEFT
+        elseif chars[0] == '>' and chars[1] == '>' then
+            return TokenKind.OP_SHIFT_RIGHT
+        elseif chars[0] == '.' and chars[1] == '.' then
+            return TokenKind.OP_RANGE
+        elseif chars[0] == '-' and chars[1] == '>' then
+            return TokenKind.OP_ARROW
+        else
+            return null
+        end
+    end
+}
+```
+
+2.5 Phase 1 Deliverables
+
+```yaml
+phase_1_deliverables:
+  compiler:
+    name: maia
+    location: bin/maia
+    usage: "maia <input.maia> -o <output>"
+    self_hosted: true
+    
+  libraries:
+    - libmaia-core.maia      # Core runtime (source)
+    - libmaia-stdlib.maia    # Standard library (source)
+    - libmaia-concurrency.maia  # Concurrency (source)
+    
+  tools:
+    - maia-fmt (self-hosted)
+    - maia-test (self-hosted)
+    - maia-docs (self-hosted)
+    
+  tests:
+    - all_bootstrap_tests_pass: true
+    - self_compilation_identical: true
+    - no_bootstrap_dependencies: true
+    
+  documentation:
+    - full_language_spec.md
+    - compiler_hacking_guide.md
+    - migration_guide.md
+```
+
+2.6 Phase 1 Success Criteria
+
+```yaml
+phase_1_success:
+  - bootstrap_compiler_can_compile_self: true
+  - stage1_compiler_can_compile_self: true
+  - stage1_and_stage2_binaries_identical: true
+  - all_tests_pass_with_self_hosted: true
+  - performance_improvement_over_bootstrap: true
+  - no_zig_code_remaining_in_compiler: true
+```
+
+---
+
+Part 3: Phase 2 - Modal Editor (mkedit)
+
+3.1 Goals
+
+```yaml
+phase_2_goals:
+  - create_kakoune_style_modal_editor: true
+  - support_extensions_via_modules: true
+  - written_100_percent_in_maiakoda: true
+  - integrate_with_maia_compiler: true
+  - support_syntax_highlighting: true
+  - support_lsp: true
+```
+
+3.2 Editor Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          mkedit - Modal Editor                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                         Core (Maia)                              │   │
+│  │  • Terminal handling (raw mode)                                  │   │
+│  │  • Buffer management                                             │   │
+│  │  • Selection management                                          │   │
+│  │  • Key mapping engine                                            │   │
+│  │  • Mode system (Normal, Insert, Visual)                          │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    │                                    │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                      Extension System                            │   │
+│  │  • Module loading (dynamic)                                      │   │
+│  │  • Hook system                                                   │   │
+│  │  • Command registration                                          │   │
+│  │  • Key binding registration                                      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    │                                    │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                      Built-in Extensions                         │   │
+│  │  • syntax/maia.maia     - Maia syntax highlighting               │   │
+│  │  • syntax/koda.maia     - Koda syntax highlighting               │   │
+│  │  • lsp/maia.maia        - Maia LSP client                        │   │
+│  │  • git/maia.maia        - Git integration                        │   │
+│  │  • filetree.maia        - File tree browser                      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+3.3 Editor Implementation (Maia)
+
+3.3.1 Core Editor (Maia)
+
+```pascal
+/* editors/mkedit/src/core.maia - Modal editor core */
+module Editor.Core
+
+export type EditorMode = enum {
+    Normal,
+    Insert,
+    Visual,
+    VisualLine,
+    VisualBlock,
+    Command,
+}
+
+export type Editor = struct {
+    mode: EditorMode,
+    buffers: own array(Buffer),
+    current_buffer: usize,
+    windows: own array(Window),
+    keymap: own Keymap,
+    hooks: own array(Hook),
+    extensions: own array(Extension),
+}
+
+export type Buffer = struct {
+    id: u32,
+    path: ?string,
+    lines: own array(string),
+    modified: bool,
+    selections: own array(Selection),
+    cursor: Position,
+    scroll: Position,
+    syntax: ?SyntaxHighlighter,
+}
+
+export type Selection = struct {
+    anchor: Position,
+    cursor: Position,
+}
+
+export type Position = struct {
+    line: usize,
+    column: usize,
+}
+
+export type Window = struct {
+    buffer_id: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    top_line: usize,
+    left_col: usize,
+}
+
+impl Editor {
+    /* Create a new editor instance */
+    function create(): own Editor
+    begin
+        var editor := Editor {
+            .mode = .Normal,
+            .buffers = array(Buffer).create(),
+            .current_buffer = 0,
+            .windows = array(Window).create(),
+            .keymap = Keymap.create(),
+            .hooks = array(Hook).create(),
+            .extensions = array(Extension).create(),
+        }
+        
+        /* Setup default key bindings */
+        editor.setup_default_keymap()
+        
+        /* Create initial buffer */
+        var buffer := Buffer.create()
+        editor.buffers.append(buffer)
+        
+        /* Create initial window */
+        var window := Window.create(0, 0, 80, 24, 0, 0)
+        editor.windows.append(window)
+        
+        return editor
+    end
+    
+    /* Run the editor main loop */
+    function run(self: *Editor)
+    begin
+        /* Initialize terminal */
+        Terminal.init_raw_mode()
+        defer Terminal.restore()
+        
+        /* Clear screen */
+        Terminal.clear()
+        
+        /* Main event loop */
+        loop {
+            /* Render current state */
+            self.render()
+            
+            /* Get input */
+            var key := Terminal.read_key()
+            
+            /* Process based on mode */
+            match self.mode {
+                .Normal => self.handle_normal_mode(key),
+                .Insert => self.handle_insert_mode(key),
+                .Visual => self.handle_visual_mode(key),
+                .Command => self.handle_command_mode(key),
+            }
+            
+            /* Run hooks */
+            self.run_hooks(.AfterKeypress)
+        }
+    end
+    
+    /* Render the editor */
+    function render(self: *Editor)
+    begin
+        var buffer := self.current_buffer()
+        var window := self.current_window()
+        
+        /* Clear area */
+        Terminal.move_cursor(0, 0)
+        
+        /* Draw buffer content */
+        var line_start := window.top_line
+        var line_end := min(line_start + window.height, buffer.lines.len())
+        
+        for i in line_start..line_end - 1 do
+            var line := buffer.lines[i]
+            var display_line := line
+            
+            /* Apply syntax highlighting */
+            if buffer.syntax != null then
+                display_line = buffer.syntax.highlight(line)
+            end
+            
+            /* Handle scrolling */
+            if window.left_col > 0 then
+                display_line = display_line[window.left_col..]
+            end
+            
+            Terminal.write(display_line)
+            
+            /* Clear rest of line */
+            Terminal.clear_to_end()
+            
+            /* Move to next line */
+            if i < line_end - 1 then
+                Terminal.write("\n")
+            end
+        end
+        
+        /* Draw status line */
+        self.draw_status_line()
+        
+        /* Draw cursor */
+        self.draw_cursor()
+    end
+    
+    /* Handle normal mode key presses */
+    function handle_normal_mode(self: *Editor, key: Key)
+    begin
+        var binding := self.keymap.get(key, .Normal)
+        
+        match binding {
+            "j" => self.move_cursor(.Down),
+            "k" => self.move_cursor(.Up),
+            "h" => self.move_cursor(.Left),
+            "l" => self.move_cursor(.Right),
+            "i" => self.mode = .Insert,
+            "v" => self.mode = .Visual,
+            "V" => self.mode = .VisualLine,
+            "dd" => self.delete_line(),
+            "yy" => self.yank_line(),
+            "p" => self.paste_after(),
+            "P" => self.paste_before(),
+            "u" => self.undo(),
+            "r" => self.redo(),
+            ":" => self.enter_command_mode(),
+            "/" => self.search_forward(),
+            "?" => self.search_backward(),
+            "n" => self.search_next(),
+            "N" => self.search_prev(),
+            "gg" => self.goto_line(0),
+            "G" => self.goto_line(self.current_buffer().lines.len() - 1),
+            "w" => self.move_word_forward(),
+            "b" => self.move_word_backward(),
+            "e" => self.move_word_end(),
+            "0" => self.move_line_start(),
+            "$" => self.move_line_end(),
+            "x" => self.delete_char(),
+            "X" => self.delete_char_backward(),
+            "o" => self.open_line_below(),
+            "O" => self.open_line_above(),
+            "a" => self.append_after_cursor(),
+            "A" => self.append_line_end(),
+            "I" => self.insert_line_start(),
+            "cw" => self.change_word(),
+            "cc" => self.change_line(),
+            "dw" => self.delete_word(),
+            "diw" => self.delete_inner_word(),
+            "ciw" => self.change_inner_word(),
+            "yy" => self.yank_line(),
+            "yw" => self.yank_word(),
+            "p" => self.paste_after(),
+            "P" => self.paste_before(),
+            ". " => self.repeat_last_command(),
+            "Ctrl-f" => self.page_down(),
+            "Ctrl-b" => self.page_up(),
+            "Ctrl-d" => self.half_page_down(),
+            "Ctrl-u" => self.half_page_up(),
+            "zz" => self.center_cursor(),
+            "zt" => self.cursor_top(),
+            "zb" => self.cursor_bottom(),
+            "Ctrl-w v" => self.split_vertical(),
+            "Ctrl-w s" => self.split_horizontal(),
+            "Ctrl-w w" => self.cycle_windows(),
+            "Ctrl-w h" => self.focus_window(.Left),
+            "Ctrl-w j" => self.focus_window(.Down),
+            "Ctrl-w k" => self.focus_window(.Up),
+            "Ctrl-w l" => self.focus_window(.Right),
+            "Ctrl-w q" => self.close_window(),
+            "Ctrl-w o" => self.close_other_windows(),
+            "gt" => self.next_tab(),
+            "gT" => self.prev_tab(),
+            else => {}
+        }
+    end
+    
+    /* Handle insert mode key presses */
+    function handle_insert_mode(self: *Editor, key: Key)
+    begin
+        match key {
+            .Escape => self.mode = .Normal,
+            .Enter => self.insert_newline(),
+            .Backspace => self.delete_char_backward(),
+            .Delete => self.delete_char_forward(),
+            .Tab => self.insert_tab(),
+            .Char(c) => self.insert_char(c),
+            .Up => self.move_cursor(.Up),
+            .Down => self.move_cursor(.Down),
+            .Left => self.move_cursor(.Left),
+            .Right => self.move_cursor(.Right),
+            .Home => self.move_line_start(),
+            .End => self.move_line_end(),
+            .PageUp => self.page_up(),
+            .PageDown => self.page_down(),
+            else => {}
+        }
+    end
+    
+    /* Handle visual mode key presses */
+    function handle_visual_mode(self: *Editor, key: Key)
+    begin
+        var binding := self.keymap.get(key, .Visual)
+        
+        match binding {
+            "j" => self.extend_selection(.Down),
+            "k" => self.extend_selection(.Up),
+            "h" => self.extend_selection(.Left),
+            "l" => self.extend_selection(.Right),
+            "w" => self.extend_word_forward(),
+            "b" => self.extend_word_backward(),
+            "e" => self.extend_word_end(),
+            "0" => self.extend_line_start(),
+            "$" => self.extend_line_end(),
+            "gg" => self.extend_to_start(),
+            "G" => self.extend_to_end(),
+            "d" => self.delete_selection(),
+            "y" => self.yank_selection(),
+            "c" => self.change_selection(),
+            "~" => self.swap_case(),
+            ">" => self.indent_right(),
+            "<" => self.indent_left(),
+            "=" => self.format_selection(),
+            "U" => self.to_upper(),
+            "u" => self.to_lower(),
+            "I" => self.insert_at_line_start(),
+            "A" => self.append_at_line_end(),
+            "J" => self.join_lines(),
+            "Escape" => self.mode = .Normal,
+            else => {}
+        }
+    end
+    
+    /* Extension management */
+    function load_extension(self: *Editor, path: string): bool
+    begin
+        /* Load extension module dynamically */
+        var module := Module.load(path)
+        if module == null then
+            return false
+        end
+        
+        /* Get extension init function */
+        var init_fn := module.symbol("extension_init") as fn(editor: *Editor)
+        if init_fn == null then
+            return false
+        end
+        
+        /* Initialize extension */
+        init_fn(self)
+        
+        return true
+    end
+    
+    /* Register a hook */
+    function register_hook(self: *Editor, event: HookEvent, callback: fn())
+    begin
+        self.hooks.append(Hook {
+            .event = event,
+            .callback = callback,
+        })
+    end
+}
+```
+
+3.3.2 Extension System
+
+```pascal
+/* editors/mkedit/src/extensions.maia - Extension system */
+module Editor.Extensions
+
+export type Extension = struct {
+    name: string,
+    version: string,
+    author: string,
+    description: string,
+    commands: own array(Command),
+    keymaps: own array(KeymapEntry),
+    hooks: own array(Hook),
+}
+
+export type Command = struct {
+    name: string,
+    description: string,
+    execute: fn(args: []string),
+}
+
+export type KeymapEntry = struct {
+    mode: EditorMode,
+    key: string,
+    action: string,
+}
+
+/* Maia syntax highlighting extension */
+export function maia_syntax_extension_init(editor: *Editor)
+begin
+    var ext := Extension {
+        .name = "maia-syntax",
+        .version = "1.0.0",
+        .author = "Purging Light Technologies",
+        .description = "Maia language syntax highlighting",
+        .commands = array(Command).create(),
+        .keymaps = array(KeymapEntry).create(),
+        .hooks = array(Hook).create(),
+    }
+    
+    /* Register syntax highlighter */
+    var highlighter := MaiaSyntaxHighlighter.create()
+    editor.register_syntax_highlighter("maia", highlighter)
+    
+    /* Register file type detection */
+    editor.register_file_type("*.maia", "maia")
+    
+    editor.register_extension(ext)
+end
+
+/* LSP client extension */
+export function lsp_extension_init(editor: *Editor)
+begin
+    var ext := Extension {
+        .name = "lsp-client",
+        .version = "1.0.0",
+        .author = "Purging Light Technologies",
+        .description = "Language Server Protocol client",
+        .commands = array(Command).create(),
+        .keymaps = array(KeymapEntry).create(),
+        .hooks = array(Hook).create(),
+    }
+    
+    /* Register LSP commands */
+    ext.commands.append(Command {
+        .name = "lsp-start",
+        .description = "Start LSP server",
+        .execute = |args| {
+            var language := args[0]
+            var server := LSP.start_server(language)
+            editor.lsp_server = server
+        },
+    })
+    
+    ext.commands.append(Command {
+        .name = "lsp-completion",
+        .description = "Show completion",
+        .execute = |args| {
+            editor.show_completion()
+        },
+    })
+    
+    /* Register LSP key bindings */
+    ext.keymaps.append(KeymapEntry {
+        .mode = .Insert,
+        .key = "Ctrl-n",
+        .action = "lsp-completion",
+    })
+    
+    ext.keymaps.append(KeymapEntry {
+        .mode = .Normal,
+        .key = "gd",
+        .action = "lsp-goto-definition",
+    })
+    
+    ext.keymaps.append(KeymapEntry {
+        .mode = .Normal,
+        .key = "K",
+        .action = "lsp-hover",
+    })
+    
+    ext.keymaps.append(KeymapEntry {
+        .mode = .Normal,
+        .key = "gr",
+        .action = "lsp-find-references",
+    })
+    
+    ext.keymaps.append(KeymapEntry {
+        .mode = .Normal,
+        .key = "Ctrl-Space",
+        .action = "lsp-completion",
+    })
+    
+    editor.register_extension(ext)
+end
+
+/* Git integration extension */
+export function git_extension_init(editor: *Editor)
+begin
+    var ext := Extension {
+        .name = "git",
+        .version = "1.0.0",
+        .author = "Purging Light Technologies",
+        .description = "Git integration",
+        .commands = array(Command).create(),
+        .keymaps = array(KeymapEntry).create(),
+        .hooks = array(Hook).create(),
+    }
+    
+    /* Register Git commands */
+    ext.commands.append(Command {
+        .name = "git-status",
+        .description = "Show git status",
+        .execute = |args| {
+            editor.show_git_status()
+        },
+    })
+    
+    ext.commands.append(Command {
+        .name = "git-commit",
+        .description = "Commit changes",
+        .execute = |args| {
+            editor.git_commit(args[0])
+        },
+    })
+    
+    ext.commands.append(Command {
+        .name = "git-diff",
+        .description = "Show diff",
+        .execute = |args| {
+            editor.show_git_diff()
+        },
+    })
+    
+    /* Register Git gutter signs */
+    editor.register_gutter("git", GitGutter.create())
+    
+    editor.register_extension(ext)
+end
+```
+
+3.4 Phase 2 Deliverables
+
+```yaml
+phase_2_deliverables:
+  editor:
+    name: mkedit
+    location: bin/mkedit
+    usage: "mkedit <file>"
+    
+  extensions:
+    - maia-syntax.maia
+    - koda-syntax.maia
+    - lsp-client.maia
+    - git.maia
+    - filetree.maia
+    
+  documentation:
+    - editor_guide.md
+    - extension_api.md
+    - keybindings.md
+    
+  tests:
+    - editor_unit_tests
+    - extension_tests
+    - integration_tests
+```
+
+3.5 Phase 2 Success Criteria
+
+```yaml
+phase_2_success:
+  - editor_fully_functional: true
+  - extensions_load_dynamically: true
+  - syntax_highlighting_works: true
+  - lsp_integration_works: true
+  - modal_editing_works: true
+  - git_integration_works: true
+  - can_edit_maia_source_files: true
+  - incremental_rebuild_on_modification: true
+```
+
+---
+
+Part 4: Phase 3 - TUI Documentation Reader (mkdocs)
+
+4.1 Goals
+
+```yaml
+phase_3_goals:
+  - create_tui_documentation_reader: true
+  - render_github_markdown: true
+  - support_navigation: true
+  - support_search: true
+  - written_in_koda: true
+  - integrated_with_editor: true
+```
+
+4.2 Documentation Reader Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    mkdocs - TUI Documentation Reader                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                        Koda Application                          │   │
+│  ├─────────────────────────────────────────────────────────────────┤   │
+│  │  • Markdown parser                                               │   │
+│  │  • Terminal renderer                                             │   │
+│  │  • Navigation system                                             │   │
+│  │  • Search index                                                  │   │
+│  │  • Help system                                                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    │                                    │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                         Components                               │   │
+│  │  • Markdown → Terminal renderer                                  │   │
+│  │  • Table of contents generator                                   │   │
+│  │  • Search engine (full-text)                                     │   │
+│  │  • Keybinding handler                                            │   │
+│  │  • History navigation                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+4.3 Documentation Reader Implementation (Koda)
+
+```koda
+# bin/mkdocs.koda - TUI documentation reader
+import Koda.Terminal
+import Koda.Markdown
+import Koda.FS
+import Koda.Search
+
+# Main documentation reader application
+function main(args: []string)
+begin
+    var docs_path := args[1] ?? "./docs"
+    
+    # Initialize terminal
+    Terminal.init_raw_mode()
+    defer Terminal.restore()
+    
+    # Load documentation index
+    var index := load_documentation_index(docs_path)
+    if index == null then
+        writeln(stderr, "Error: No documentation found in ", docs_path)
+        exit(1)
+    end
+    
+    # Create documentation reader
+    var reader := DocReader.create(index)
+    
+    # Run the reader
+    reader.run()
+end
+
+# Documentation reader
+type DocReader = struct {
+    index: DocIndex,
+    current_page: Page,
+    history: array(string),
+    history_position: usize,
+    search_results: array(SearchResult),
+    search_query: string,
+    keybindings: Keymap,
+}
+
+impl DocReader {
+    function create(index: DocIndex): own DocReader
+    begin
+        var reader := DocReader {
+            .index = index,
+            .current_page = index.pages[0],
+            .history = array(string).create(),
+            .history_position = -1,
+            .search_results = array(SearchResult).create(),
+            .search_query = "",
+            .keybindings = Keymap.create(),
+        }
+        
+        reader.setup_keybindings()
+        
+        return reader
+    end
+    
+    function run(self: *DocReader)
+    begin
+        Terminal.clear()
+        
+        loop {
+            # Render current page
+            self.render()
+            
+            # Get input
+            var key := Terminal.read_key()
+            
+            # Handle input
+            var action := self.keybindings.get(key)
+            
+            match action {
+                "quit" => break,
+                "next_page" => self.next_page(),
+                "prev_page" => self.prev_page(),
+                "scroll_down" => self.scroll(10),
+                "scroll_up" => self.scroll(-10),
+                "page_down" => self.page_down(),
+                "page_up" => self.page_up(),
+                "top" => self.go_to_top(),
+                "bottom" => self.go_to_bottom(),
+                "search" => self.start_search(),
+                "next_search" => self.next_search_result(),
+                "prev_search" => self.prev_search_result(),
+                "history_back" => self.history_back(),
+                "history_forward" => self.history_forward(),
+                "table_of_contents" => self.show_toc(),
+                "help" => self.show_help(),
+                else => {}
+            }
+        end
+    end
+    
+    function render(self: *DocReader)
+    begin
+        Terminal.clear()
+        
+        # Get terminal dimensions
+        var width := Terminal.width()
+        var height := Terminal.height()
+        
+        # Render header
+        self.render_header(width)
+        
+        # Render content area
+        var content_height := height - 3
+        var content := self.current_page.render_markdown(width, self.scroll_offset)
+        Terminal.write_at(0, 1, content)
+        
+        # Clear remaining lines
+        for i in content.len() + 1..content_height - 1 do
+            Terminal.write_at(0, i, " " * width)
+        end
+        
+        # Render footer
+        self.render_footer(width)
+        
+        # Render search bar if active
+        if self.search_active then
+            self.render_search_bar(width)
+        end
+    end
+    
+    function render_header(self: *DocReader, width: i32)
+    begin
+        var title := "📚 " ++ self.index.title ++ " - " ++ self.current_page.title
+        var line := "─" * (width - title.len() - 2)
+        
+        Terminal.set_attribute(.Bold)
+        Terminal.write_at(0, 0, title)
+        Terminal.write_at(title.len() + 1, 0, line)
+        Terminal.reset_attributes()
+    end
+    
+    function render_footer(self: *DocReader, width: i32)
+    begin
+        var height := Terminal.height()
+        var status := "Page " ++ (self.current_page.index + 1).to_string() ++ 
+                      " of " ++ self.index.pages.len().to_string()
+        var help := "[q]uit [h]istory [s]earch [?]help"
+        var space := width - status.len() - help.len() - 2
+        
+        Terminal.write_at(0, height - 1, status)
+        Terminal.write_at(status.len() + 1 + space, height - 1, help)
+    end
+    
+    function render_search_bar(self: *DocReader, width: i32)
+    begin
+        var height := Terminal.height()
+        var prompt := "🔍 Search: "
+        var input_line := prompt ++ self.search_query
+        
+        Terminal.set_attribute(.Reverse)
+        Terminal.write_at(0, height - 2, input_line + " " * (width - input_line.len()))
+        Terminal.reset_attributes()
+        
+        # Position cursor at end of query
+        Terminal.move_cursor(prompt.len() + self.search_query.len(), height - 2)
+    end
+    
+    function load_documentation_index(path: string): ?DocIndex
+    begin
+        # Look for mkdocs.toml or README.md
+        var config_path := path ++ "/mkdocs.toml"
+        
+        if FS.exists(config_path) then
+            var config := TOML.parse_file(config_path)
+            return DocIndex.from_config(config)
+        else
+            # Auto-discover markdown files
+            var files := FS.glob(path ++ "/**/*.md")
+            var pages := array(Page).create()
+            
+            for file in files do
+                var content := FS.read_file(file)
+                var title := extract_title(content)
+                
+                pages.append(Page {
+                    .path = file,
+                    .title = title,
+                    .content = content,
+                })
+            end
+            
+            return DocIndex {
+                .title = FS.basename(path),
+                .pages = pages,
+            }
+        end
     end
 }
 
-procedure main()
-begin
-    var c: tag Counter := Counter.create()
-    spawn c.increment()
-    spawn c.increment()
-    wait()
-    writeln(c.get())  // 2
-end
+# Markdown to terminal renderer
+type MarkdownRenderer = struct {
+    width: i32,
+    scroll: i32,
+}
 
-// Example 4: Async/Await
-async function fetch(url: string): string
-begin
-    var resp := await http.get(url)
-    return resp.body
-end
-
-async procedure main()
-begin
-    var data := await fetch("https://api.example.com")
-    writeln(data)
-end
-
-// Example 5: FFI to C
-@link("c")
-extern function printf(format: *u8, ...): int32
-
-procedure main()
-begin
-    var msg := "Hello from Maia!\n"
-    printf(msg)
-end
-```
-
-11.2 Koda Examples
-
-```pascal
-// Example 1: Web Server
-import Koda.Web
-
-var app := Web.Server.create()
-
-app.get("/", |req| {
-    return "Hello, World!"
-})
-
-app.get("/users/:id", |req| {
-    var id := req.params.id
-    var user := db.find_user(id)
-    return user
-})
-
-app.listen(8080)
-
-// Example 2: Async Operations
-async function fetch_data(): string
-begin
-    var data := await http.get("https://api.example.com")
-    return data
-end
-
-async procedure main()
-begin
-    var results := await_all([
-        spawn fetch_data(),
-        spawn fetch_data(),
-    ])
-    
-    for result in results do
-        writeln(result)
+impl MarkdownRenderer {
+    function render(self: *MarkdownRenderer, markdown: string): string
+    begin
+        var tokens := Markdown.parse(markdown)
+        var output := ""
+        var indent := 0
+        
+        for token in tokens do
+            match token.type {
+                .Heading1 => {
+                    output += "\n" + "=" * self.width + "\n"
+                    output += self.center_text(token.text) + "\n"
+                    output += "=" * self.width + "\n\n"
+                }
+                .Heading2 => {
+                    output += "\n" + "─" * self.width + "\n"
+                    output += self.center_text(token.text) + "\n"
+                    output += "─" * self.width + "\n\n"
+                }
+                .Heading3 => {
+                    output += "\n🔹 " ++ token.text ++ "\n\n"
+                }
+                .Paragraph => {
+                    output += self.wrap_text(token.text, self.width) + "\n\n"
+                }
+                .CodeBlock => {
+                    output += "┌" + "─" * (self.width - 2) + "┐\n"
+                    
+                    var lines := token.text.split("\n")
+                    for line in lines do
+                        output += "│ " + line + " " * (self.width - line.len() - 3) + "│\n"
+                    end
+                    
+                    output += "└" + "─" * (self.width - 2) + "┘\n\n"
+                }
+                .InlineCode => {
+                    output += "`" + token.text + "`"
+                }
+                .Link => {
+                    output += "\x1b[34m" + token.text + "\x1b[0m"  # Blue color
+                }
+                .List => {
+                    for item in token.items do
+                        output += "• " + item + "\n"
+                    end
+                    output += "\n"
+                }
+                .Table => {
+                    output += self.render_table(token, self.width) + "\n"
+                }
+                .Blockquote => {
+                    for line in token.text.split("\n") do
+                        output += "│ " + line + "\n"
+                    end
+                    output += "\n"
+                }
+                else => {
+                    output += token.text
+                }
+            }
+        end
+        
+        return output
     end
+    
+    function wrap_text(self: *MarkdownRenderer, text: string, width: i32): string
+    begin
+        var words := text.split(" ")
+        var lines := array(string).create()
+        var current_line := ""
+        
+        for word in words do
+            if current_line.len() + word.len() + 1 <= width then
+                if current_line.len() > 0 then
+                    current_line += " "
+                end
+                current_line += word
+            else
+                lines.append(current_line)
+                current_line := word
+            end
+        end
+        
+        if current_line.len() > 0 then
+            lines.append(current_line)
+        end
+        
+        return lines.join("\n")
+    end
+    
+    function center_text(self: *MarkdownRenderer, text: string): string
+    begin
+        var padding := (self.width - text.len()) / 2
+        return " " * padding + text
+    end
+    
+    function render_table(self: *MarkdownRenderer, token: TableToken, width: i32): string
+    begin
+        var output := ""
+        
+        # Calculate column widths
+        var col_widths := array(i32).create()
+        for i in 0..token.headers.len() - 1 do
+            var max_width := token.headers[i].len()
+            for row in token.rows do
+                if row[i].len() > max_width then
+                    max_width = row[i].len()
+                end
+            end
+            col_widths.append(max_width + 2)
+        end
+        
+        # Render header
+        for i in 0..token.headers.len() - 1 do
+            output += "│ " + token.headers[i] + " " * (col_widths[i] - token.headers[i].len() - 1)
+        end
+        output += "│\n"
+        
+        # Render separator
+        for i in 0..token.headers.len() - 1 do
+            output += "├" + "─" * col_widths[i]
+        end
+        output += "┤\n"
+        
+        # Render rows
+        for row in token.rows do
+            for i in 0..row.len() - 1 do
+                output += "│ " + row[i] + " " * (col_widths[i] - row[i].len() - 1)
+            end
+            output += "│\n"
+        end
+        
+        return output
+    end
+}
+
+# Search functionality
+function search_documentation(index: DocIndex, query: string): []SearchResult
+begin
+    var results := array(SearchResult).create()
+    var terms := query.to_lower().split(" ")
+    
+    for page in index.pages do
+        var score := 0
+        var content := page.content.to_lower()
+        
+        for term in terms do
+            if page.title.to_lower().contains(term) then
+                score += 10
+            end
+            
+            var count := content.count(term)
+            score += count
+        end
+        
+        if score > 0 then
+            results.append(SearchResult {
+                .page = page,
+                .score = score,
+                .excerpt = extract_excerpt(content, terms[0]),
+            })
+        end
+    end
+    
+    # Sort by score descending
+    results.sort(|a, b| b.score - a.score)
+    
+    return results
 end
+```
 
-// Example 3: VCS Operations
-import Koda.VCS
+4.5 Phase 3 Deliverables
 
-var repo := Git.clone("https://github.com/user/repo", "./local")
-repo.checkout("main")
-var commit := repo.get_current_commit()
-repo.pull()
+```yaml
+phase_3_deliverables:
+  reader:
+    name: mkdocs
+    location: bin/mkdocs
+    usage: "mkdocs [docs_path]"
+    
+  features:
+    - markdown_rendering
+    - table_of_contents
+    - full_text_search
+    - history_navigation
+    - keyboard_shortcuts
+    - syntax_highlighting_in_code_blocks
+    
+  documentation:
+    - user_guide.md
+    - markdown_support.md
+    - keybindings.md
+    
+  integration:
+    - editor_integration (F1 opens docs)
+    - help_system
+```
 
-// Example 4: Build Script
-task("compile", {
-    exec("maia", ["build", "--release"])
-})
+4.6 Phase 3 Success Criteria
 
-task("test", depends: ["compile"], {
-    exec("maia", ["test", "--verbose"])
-})
-
-task("all", depends: ["compile", "test"])
-
-// Example 5: Templates
-var tpl := Template.create("""
-    <html>
-    <head><title>{{ title }}</title></head>
-    <body>
-        <h1>Hello, {{ name }}!</h1>
-        <ul>
-        {% for item in items %}
-            <li>{{ item }}</li>
-        {% end %}
-        </ul>
-    </body>
-    </html>
-""")
-
-var output := tpl.render({
-    title = "Welcome",
-    name = "Koda",
-    items = ["Apple", "Banana", "Orange"],
-})
+```yaml
+phase_3_success:
+  - renders_github_markdown_correctly: true
+  - navigation_works: true
+  - search_finds_relevant_content: true
+  - runs_in_terminal_without_issues: true
+  - handles_large_documentation_sets: true
+  - integrated_with_mkedit: true
 ```
 
 ---
 
-Part 12: Implementation Guide for AI
-
-12.1 When Generating Maia Code
+Part 5: Complete Development Roadmap
 
 ```yaml
-rules:
-  - use_begin_end_blocks: true
-  - explicit_types_preferred: true
-  - defer_for_cleanup: true
-  - unsafe_blocks_for_assembly: true
-  - async_functions_for_io: true
-  - actors_for_concurrent_state: true
-  - use_ref_capabilities: [iso, val, tag]
-  - explicit_allocators: true
-  - safe_blocks_for_trusted_code: false
+development_roadmap:
+  phase_0:
+    duration: "4-6 weeks"
+    team_size: 3
+    output: "Bootstrap compiler (Zig)"
+    success_criteria: "All language features working"
+    
+  phase_1:
+    duration: "6-8 weeks"
+    team_size: 3
+    output: "Self-hosted compiler (MaiaKoda)"
+    success_criteria: "Can compile itself without Zig"
+    
+  phase_2:
+    duration: "4-5 weeks"
+    team_size: 2
+    output: "Modal editor (mkedit)"
+    success_criteria: "Extensions work, LSP integrated"
+    
+  phase_3:
+    duration: "2-3 weeks"
+    team_size: 1
+    output: "TUI documentation reader (mkdocs)"
+    success_criteria: "Markdown rendering works"
+    
+  total_duration: "16-22 weeks"
+  total_team_size: 4 (peak)
 ```
 
-12.2 When Generating Koda Code
+5.1 Dependencies
 
 ```yaml
-rules:
-  - use_async_await_for_io: true
-  - templates_for_html: true
-  - vcs_operations_builtin: true
-  - web_server_first_class: true
-  - toml_for_config: true
-  - pipelines_for_shell: "cmd1 | cmd2"
-  - jobs_control_available: [fg, bg, jobs]
+dependencies:
+  phase_0:
+    requires: [Zig 0.13+, LLVM 18+ (optional)]
+    produces: [maia-bootstrap]
+    
+  phase_1:
+    requires: [phase_0]
+    produces: [maia-selfhosted]
+    
+  phase_2:
+    requires: [phase_1]
+    produces: [mkedit]
+    
+  phase_3:
+    requires: [phase_1]
+    produces: [mkdocs]
 ```
 
-12.3 Error Messages to Generate
+5.2 Success Metrics
 
 ```yaml
-maia_errors:
-  - "error: use of moved value 'variable'"
-  - "error: cannot borrow 'variable' as mutable because it is also borrowed as immutable"
-  - "error: index out of bounds: len = X, index = Y"
-  - "error: integer overflow"
-  - "error: cannot send 'ref' across actor boundary"
-
-koda_errors:
-  - "error: await used outside of async function"
-  - "error: template variable 'name' not found"
-  - "error: Git repository not found at path"
-  - "error: route parameter 'id' not defined"
+success_metrics:
+  compiler_performance:
+    compile_time: "< 1s for 10K LOC"
+    memory_usage: "< 100MB"
+    binary_size: "< 10KB for hello world"
+    
+  editor_performance:
+    startup_time: "< 100ms"
+    file_open_time: "< 50ms for 1MB file"
+    syntax_highlighting: "< 10ms per frame"
+    
+  documentation_reader:
+    startup_time: "< 50ms"
+    search_time: "< 100ms for 1000 pages"
+    rendering_speed: "< 16ms per frame"
 ```
 
 ---
 
-Part 13: File Extensions
+Part 6: Summary
 
 ```yaml
-maia:
-  source: .maia
-  module: .maia
-  interface: .mai
-  object: .o
-  static_lib: .a
-  shared_lib: .so, .dylib, .dll
-
-koda:
-  script: .koda
-  module: .koda
-  build_script: build.koda
-
-config:
-  project: maia.toml
-  package: package.toml
-  build: .maia/build.toml
-  repo: .maia/repo.toml
-  user: .kodarc.toml
-
-documentation:
-  main: README.md
-  contributing: CONTRIBUTING.md
-  changelog: CHANGELOG.md
-  license: LICENSE
+summary:
+  phase_0: "Bootstrap compiler in Zig - complete language implementation"
+  phase_1: "Self-hosted compiler - 100% MaiaKoda"
+  phase_2: "Modal editor - Kakoune-style, extensible"
+  phase_3: "TUI documentation reader - GitHub Markdown"
+  
+  key_principle: "Each phase builds on previous phases"
+  verification: "Each phase tests previous phase output"
+  documentation: "All phases produce documentation"
+  
+  final_goal: "Complete self-hosted MaiaKoda development environment"
 ```
 
----
-
-Part 14: Complete BNF Grammar
-
-```ebnf
-(* Full MaiaKoda Grammar v0.0.1 *)
-
-(* Top Level *)
-program         = { module | koda_script }
-module          = "module" ident ";" { declaration }
-koda_script     = { statement }
-
-(* Declarations *)
-declaration     = var_decl | const_decl | func_decl | proc_decl | type_decl
-                | actor_decl | extern_decl
-
-var_decl        = "var" ident { "," ident } ":" type [ "=" expr ]
-const_decl      = "const" ident ":" type "=" expr
-func_decl       = [ "async" ] "function" ident "(" [ params ] ")" ":" type [ ";" ] block
-proc_decl       = [ "async" ] "procedure" ident "(" [ params ] ")" [ ";" ] block
-type_decl       = "type" ident "=" type
-
-(* Blocks *)
-block           = "begin" { statement } "end"
-
-(* Statements *)
-statement       = assignment | if_stmt | for_stmt | while_stmt | match_stmt
-                | return_stmt | defer_stmt | try_stmt | spawn_stmt
-                | safe_block | unsafe_block | expr ";"
-
-assignment      = lvalue assign_op expr
-assign_op       = ":=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
-lvalue          = ident [ "[" expr "]" ] [ "." ident ]
-
-if_stmt         = "if" expr "then" block { "elsif" expr "then" block } [ "else" block ] "end"
-for_stmt        = "for" for_range "do" block "end"
-for_range       = ident "in" range_expr | ident "," ident "in" expr
-while_stmt      = "while" expr "do" block "end"
-match_stmt      = "match" expr "{" { match_case } "}"
-match_case      = pattern "=>" block ","
-
-return_stmt     = "return" [ expr ]
-defer_stmt      = "defer" expr
-try_stmt        = "try" block { "catch" [ pattern ] block } "end"
-spawn_stmt      = "spawn" expr
-
-safe_block      = "safe" "do" block "end"
-unsafe_block    = "unsafe" "do" block "end"
-
-(* Expressions *)
-expr            = logical_expr
-logical_expr    = compare_expr { ("and" | "or") compare_expr }
-compare_expr    = additive_expr { ("==" | "!=" | "<" | ">" | "<=" | ">=") additive_expr }
-additive_expr   = multiplicative_expr { ("+" | "-") multiplicative_expr }
-multiplicative_expr = unary_expr { ("*" | "/" | "%" | "//") unary_expr }
-unary_expr      = ["not" | "-" | "~" | "&" | "*"] primary_expr
-
-primary_expr    = literal | ident | "(" expr ")" | call_expr | subscript_expr
-                | member_expr | await_expr | range_expr | lambda_expr
-
-call_expr       = expr "(" [ expr { "," expr } ] ")"
-subscript_expr  = expr "[" expr "]"
-member_expr     = expr "." ident
-await_expr      = "await" expr
-range_expr      = expr ".." expr [ "<" ]
-lambda_expr     = "|" [ params ] "|" expr
-
-(* Types *)
-type            = primitive_type | composite_type | qualified_type | function_type
-primitive_type  = "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64"
-                | "f32" | "f64" | "bool" | "string" | "usize" | "isize"
-composite_type  = "[" expr "]" type | "[]" type | "array(" type ")"
-                | "struct" "{" { ident ":" type "," } "}"
-                | "enum" "{" { ident [ "=" expr ] "," } "}"
-                | "?" type
-qualified_type  = [ "own" | "ref" | "mut" | "rc" | "weak" ] type
-                | [ "iso" | "trn" | "val" | "box" | "tag" ] type
-function_type   = "function" "(" [ params ] ")" ":" type
-
-(* Patterns *)
-pattern         = literal | ident | "_" | "(" pattern { "," pattern } ")"
-                | ident ".." ident
-
-(* Parameters *)
-params          = param { "," param }
-param           = ident ":" type [ "=" expr ]
-
-(* Lexical *)
-ident           = letter { letter | digit | "_" }
-literal         = integer_literal | float_literal | string_literal | bool_literal | "null"
-integer_literal = digit { digit } [ "_" digit { digit } ]
-                | "0x" hex_digit { hex_digit }
-                | "0o" oct_digit { oct_digit }
-                | "0b" bin_digit { bin_digit }
-float_literal   = digit { digit } "." digit { digit } [ "e" [ "+" | "-" ] digit { digit } ]
-string_literal  = '"' { character } '"' | '"""' { character } '"""'
-bool_literal    = "true" | "false"
-
-letter          = "A".."Z" | "a".."z" | "_"
-digit           = "0".."9"
-hex_digit       = "0".."9" | "A".."F" | "a".."f"
-oct_digit       = "0".."7"
-bin_digit       = "0" | "1"
-```
-
----
-
-Part 15: AI Instructions
-
-```yaml
-when_asked_to_generate_maia_code:
-  1. Use Pascal-style syntax with begin/end blocks
-  2. Declare modules at top: "module Name;"
-  3. Use explicit types with "var name: type = value"
-  4. Use "procedure" for no return, "function" for return
-  5. Use "own/ref/mut/rc/weak" for ownership
-  6. Use "iso/trn/ref/val/box/tag" for capabilities
-  7. Use "actor" for concurrent state, "behavior" for actor methods
-  8. Use "async/await" for I/O operations
-  9. Use "unsafe" blocks for inline assembly
-  10. Use "defer" for cleanup
-
-when_asked_to_generate_koda_code:
-  1. Same Pascal-style syntax as Maia
-  2. Use "async/await" for async operations
-  3. Use "spawn" for task creation
-  4. Use Web.Server for HTTP applications
-  5. Use Git.clone for VCS operations
-  6. Use Template.create for HTML templates
-  7. Use task() for build automation
-  8. Use TOML.parse_file for configuration
-
-when_asked_about_ffi:
-  - C: 'extern "C" function name(params): ret'
-  - C++: 'extern "C++" type Class = struct { methods }'
-  - Rust: 'extern "Rust" function name(params): ret'
-  - Zig: 'extern "Zig" function name(params): ret'
-  - Pony: 'extern "Pony" function name(params): ret'
-  - Java: 'extern "Java" function name(params): ret'
-  - Python: 'extern "Python" function name(params): ret'
-  - Objective-C: 'extern "ObjectiveC" function name(params): ret'
-
-when_asked_about_config:
-  format: TOML
-  always_use_toml_for_new_configs
-  convert_existing_configs_to_toml
-  prefer_toml_over_json_yaml_xml
-
-when_asked_about_docs:
-  format: Markdown
-  use_github_flavored_markdown
-  generate_from_doc_comments
-  output_to_docs/ directory
-```
-
----
-
-End of Specification
-
-```yaml
-specification_version: 0.0.1
-status: ready_for_ai_consumption
-last_updated: 2026-04-10
-maintainer: Purging Light Technologies
-license: MIT
-```
-
-This specification is intended for AI-assisted development. For human-readable documentation, see docs.maiakoda.com
+This specification provides a complete, unambiguous roadmap for Claude to implement the MaiaKoda language and its ecosystem across four phases, with clear deliverables, success criteria, and implementation details for each component.
