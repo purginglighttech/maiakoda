@@ -1,16 +1,16 @@
-MaiaKoda Language Specification v0.0.1
+MaiaKoda Language Specification v0.0.2
 
 Document Information
 
 Property Value
-Specification Version 0.0.1
-Language Version 0.0.1
+Specification Version 0.0.2
+Language Version 0.0.2
 Status Pre-alpha
-Release Date 2026-04-14
+Release Date 2026-04-17
 Copyright © 2026 Purging Light Technologies
 License MIT
 Documentation Format GitHub Markdown
-Configuration Format TOML
+Configuration Format TOML Only (No YAML, No JSON)
 
 ---
 
@@ -31,17 +31,18 @@ Koda Interpreted scripting language Embedded scripting, standalone shell, build 
 3. Zero-Cost Abstractions - No runtime overhead for language features
 4. Pascal Syntax - Clean, readable, no significant whitespace
 5. No Macros - No code obfuscation, comptime functions instead
-6. TOML Configuration - All configurations use TOML format
+6. TOML Configuration - All configurations use TOML format exclusively
 7. Markdown Documentation - All documentation uses GitHub Markdown
+8. Cross-Platform - Tier 1 support for Linux, Windows, macOS, FreeBSD, OpenBSD, NetBSD, DragonFlyBSD
 
 1.3 Language Relationship
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           MaiaKoda                                        │
+│                           MaiaKoda                                       │
 ├─────────────────────────────────┬───────────────────────────────────────┤
-│            Maia                  │                Koda                    │
-│    (Compiled Systems Lang)       │      (Interpreted Scripting Lang)      │
+│            Maia                  │                Koda                   │
+│    (Compiled Systems Lang)       │      (Interpreted Scripting Lang)     │
 ├─────────────────────────────────┼───────────────────────────────────────┤
 │ • No GC                         │ • Embedded (Lua-style)                 │
 │ • Compile-time RC               │ • Standalone shell (Bash-style)        │
@@ -51,6 +52,7 @@ Koda Interpreted scripting language Embedded scripting, standalone shell, build 
 │ • Inline assembly               │ • Built-in ORM                         │
 │ • 4 backends (x86/ARM/RV/WASM)  │ • Web framework (first-class)          │
 │ • FFI to 7 languages            │ • FFI via Maia                         │
+│ • Self-hosted                   │ • Runs on Maia VM                      │
 └─────────────────────────────────┴───────────────────────────────────────┘
 ```
 
@@ -75,54 +77,55 @@ Tokens are classified as:
 
 2.3 Keywords
 
-```yaml
-keywords:
-  module: "module"
-  use: "use"
-  export: "export"
-  var: "var"
-  const: "const"
-  function: "function"
-  procedure: "procedure"
-  type: "type"
-  struct: "struct"
-  enum: "enum"
-  begin: "begin"
-  end: "end"
-  if: "if"
-  then: "then"
-  elsif: "elsif"
-  else: "else"
-  for: "for"
-  while: "while"
-  do: "do"
-  loop: "loop"
-  break: "break"
-  continue: "continue"
-  return: "return"
-  match: "match"
-  as: "as"
-  null: "null"
-  true: "true"
-  false: "false"
-  own: "own"
-  ref: "ref"
-  mut: "mut"
-  rc: "rc"
-  weak: "weak"
-  iso: "iso"
-  trn: "trn"
-  val: "val"
-  box: "box"
-  tag: "tag"
-  actor: "actor"
-  behavior: "behavior"
-  spawn: "spawn"
-  await: "await"
-  async: "async"
-  defer: "defer"
-  unsafe: "unsafe"
-  safe: "safe"
+```toml
+# keywords.toml
+[keywords]
+module = "module"
+use = "use"
+export = "export"
+var = "var"
+const = "const"
+function = "function"
+procedure = "procedure"
+type = "type"
+struct = "struct"
+enum = "enum"
+begin = "begin"
+end = "end"
+if = "if"
+then = "then"
+elsif = "elsif"
+else = "else"
+for = "for"
+while = "while"
+do = "do"
+loop = "loop"
+break = "break"
+continue = "continue"
+return = "return"
+match = "match"
+as = "as"
+null = "null"
+true = "true"
+false = "false"
+own = "own"
+ref = "ref"
+mut = "mut"
+rc = "rc"
+weak = "weak"
+iso = "iso"
+trn = "trn"
+val = "val"
+box = "box"
+tag = "tag"
+actor = "actor"
+behavior = "behavior"
+spawn = "spawn"
+await = "await"
+async = "async"
+defer = "defer"
+unsafe = "unsafe"
+safe = "safe"
 ```
 
 2.4 Identifiers
@@ -827,38 +830,199 @@ extern "ObjectiveC" function objc_msgSend(obj: *objc_object, sel: *objc_selector
 
 ---
 
-Part 13: Configuration (TOML)
+Part 13: Platform Support
 
-13.1 Project Configuration (maia.toml)
+13.1 Tier 1 Platforms
+
+```toml
+# platforms.toml
+[tier_1.linux]
+minimum_kernel = "6.12"
+preferred_kernel = "6.18"
+architectures = ["x86_64", "arm64", "riscv64"]
+libc = ["glibc", "musl"]
+
+[tier_1.linux.features]
+epoll = true
+io_uring = true
+futex = true
+userfaultfd = true
+seccomp = true
+
+[tier_1.windows]
+minimum_version = "Windows 10 (1607+)"
+preferred_version = "Windows 11"
+architectures = ["x86_64", "arm64"]
+
+[tier_1.windows.features]
+iocp = true
+ucrt = true
+win32_api = true
+nt_api = true
+overlapped_io = true
+
+[tier_1.macos]
+minimum_version = "macOS 11 (Big Sur)"
+preferred_version = "macOS 14 (Sonoma)"
+architectures = ["x86_64", "arm64"]
+
+[tier_1.macos.features]
+grand_central_dispatch = true
+mach_ipc = true
+kqueue = true
+lib_system = true
+dispatch_io = true
+
+[tier_1.freebsd]
+minimum_version = "FreeBSD 13.0"
+preferred_version = "FreeBSD 14.0"
+architectures = ["x86_64", "arm64", "riscv64"]
+
+[tier_1.freebsd.features]
+kqueue = true
+capsicum = true
+jails = true
+procctl = true
+pthread = true
+
+[tier_1.openbsd]
+minimum_version = "OpenBSD 7.0"
+preferred_version = "OpenBSD 7.5"
+architectures = ["x86_64", "arm64"]
+
+[tier_1.openbsd.features]
+kqueue = true
+pledge = true
+unveil = true
+sysctl = true
+pthread = true
+
+[tier_1.netbsd]
+minimum_version = "NetBSD 10.0"
+preferred_version = "NetBSD 10.1"
+architectures = ["x86_64", "arm64", "riscv64"]
+
+[tier_1.netbsd.features]
+kqueue = true
+kauth = true
+nvmm = true
+sysctl = true
+pthread = true
+
+[tier_1.dragonflybsd]
+minimum_version = "DragonFlyBSD 6.0"
+preferred_version = "DragonFlyBSD 6.4"
+architectures = ["x86_64"]
+
+[tier_1.dragonflybsd.features]
+kqueue = true
+hammer2 = true
+dsynth = true
+vkernel = true
+pthread = true
+nvmm = true
+```
+
+13.2 Platform Detection
+
+```pascal
+@comptime
+function current_platform(): Platform
+begin
+    if @target_os() == "linux" then
+        return .Linux
+    elsif @target_os() == "windows" then
+        return .Windows
+    elsif @target_os() == "macos" then
+        return .MacOS
+    elsif @target_os() == "freebsd" then
+        return .FreeBSD
+    elsif @target_os() == "openbsd" then
+        return .OpenBSD
+    elsif @target_os() == "netbsd" then
+        return .NetBSD
+    elsif @target_os() == "dragonfly" then
+        return .DragonFlyBSD
+    else
+        @compile_error("Unsupported platform")
+    end
+end
+```
+
+---
+
+Part 14: Configuration (TOML Only)
+
+14.1 Project Configuration (maia.toml)
 
 ```toml
 [project]
 name = "myproject"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Purging Light Technologies"]
 license = "MIT"
 
 [project.dependencies]
-stdlib = { version = "^0.0.1" }
+stdlib = { version = "^0.0.2" }
 
 [build]
 optimization = "debug"
 safety = "full"
 target = "x86_64-linux"
+
+[build.targets.linux]
+kernel_minimum = "6.12"
+architectures = ["x86_64", "arm64", "riscv64"]
+
+[build.targets.windows]
+version_minimum = "10"
+build_minimum = 14393
+
+[build.targets.macos]
+version_minimum = "11"
+
+[build.targets.freebsd]
+version_minimum = "13.0"
+
+[build.targets.openbsd]
+version_minimum = "7.0"
+
+[build.targets.netbsd]
+version_minimum = "10.0"
+
+[build.targets.dragonflybsd]
+version_minimum = "6.0"
 ```
 
-13.2 Package Manifest (package.toml)
+14.2 Package Manifest (package.toml)
 
 ```toml
 [package]
 name = "stdlib"
-version = "0.0.1"
+version = "0.0.2"
 
 [package.dependencies]
-core = { version = "^0.0.1" }
+core = { version = "^0.0.2" }
+
+[package.target_dependencies.linux]
+epoll = { version = "^0.0.2" }
+io_uring = { version = "^0.0.2", optional = true }
+
+[package.target_dependencies.bsd]
+kqueue = { version = "^0.0.2" }
+
+[package.target_dependencies.openbsd]
+pledge = { version = "^0.0.2" }
+unveil = { version = "^0.0.2" }
+
+[package.target_dependencies.freebsd]
+capsicum = { version = "^0.0.2" }
+
+[package.target_dependencies.dragonflybsd]
+hammer2 = { version = "^0.0.2" }
 ```
 
-13.3 Build Configuration (.maia/build.toml)
+14.3 Build Configuration (.maia/build.toml)
 
 ```toml
 [build]
@@ -869,22 +1033,45 @@ color = true
 [build.cache]
 enabled = true
 directory = ".cache/build"
+compress = true
+
+[build.container]
+enabled = false
+image = "maiakoda/builder:latest"
+volumes = [".:/src", "build:/build"]
 ```
 
-13.4 Repository Configuration (.maia/repo.toml)
+14.4 CI/CD Configuration (.maia/ci.toml)
 
 ```toml
-[repository]
-type = "git"
-url = "https://github.com/purginglight/maiakoda"
-branch = "main"
-
-[repository.submodules]
+[ci]
 enabled = true
-recursive = true
+provider = "github-actions"
+
+[ci.matrix]
+os = ["ubuntu-24.04", "ubuntu-26.04", "windows-10", "windows-11", "macos-11", "macos-14", "freebsd-13", "freebsd-14", "openbsd-7.0", "openbsd-7.5", "netbsd-10.0", "netbsd-10.1", "dragonflybsd-6.0", "dragonflybsd-6.4"]
+arch = ["x86_64", "arm64", "riscv64"]
+
+[ci.steps.checkout]
+command = "git clone $REPO_URL ."
+
+[ci.steps.bootstrap]
+command = "koda bootstrap"
+
+[ci.steps.test]
+command = "koda test --matrix"
+
+[ci.cache]
+enabled = true
+paths = [".cache/build", "deps"]
+key = "${{ runner.os }}-${{ hashFiles('maia.lock') }}"
+
+[ci.notifications.slack]
+webhook = "https://hooks.slack.com/services/..."
+on = ["failure"]
 ```
 
-13.5 User Configuration (~/.maiarc.toml)
+14.5 User Configuration (~/.maiarc.toml)
 
 ```toml
 [user]
@@ -892,12 +1079,17 @@ name = "developer"
 email = "dev@purginglight.com"
 
 [editor]
-default = "vim"
+default = "loki"
 syntax = true
 line_numbers = true
+
+[paths]
+install = "/usr/local/maia"
+cache = "~/.cache/maia"
+projects = "~/projects"
 ```
 
-13.6 Koda Shell Configuration (~/.kodarc.toml)
+14.6 Koda Shell Configuration (~/.kodarc.toml)
 
 ```toml
 [shell]
@@ -908,13 +1100,18 @@ history_size = 10000
 ll = "ls -la"
 gs = "git status"
 gd = "git diff"
+maia_build = "maia build --release"
+koda_run = "koda run"
+
+[shell.path]
+add = ["$HOME/.local/bin", "$HOME/bin"]
 ```
 
 ---
 
-Part 14: Documentation (Markdown)
+Part 15: Documentation (Markdown)
 
-14.1 Documentation Comments
+15.1 Documentation Comments
 
 Documentation comments use /// syntax and support Markdown formatting.
 
@@ -930,7 +1127,7 @@ Documentation comments use /// syntax and support Markdown formatting.
 /// writeln(result)  /* 8 */
 /// ```
 /// 
-/// @since 1.0.0
+/// @since 0.0.2
 module Math
 
 /// Adds two integers together.
@@ -944,7 +1141,7 @@ module Math
 function add(a: int32, b: int32): int32
 ```
 
-14.2 Documentation Tags
+15.2 Documentation Tags
 
 Tag Description Example
 @param name description Function parameter @param x The X coordinate
@@ -952,15 +1149,15 @@ Tag Description Example
 @example code Usage example @example var x := add(5,3)
 @see reference Cross reference @see subtract
 @deprecated reason Deprecation notice @deprecated Use newFunction instead
-@since version Version added @since 1.0.0
+@since version Version added @since 0.0.2
 
-14.3 Documentation Generation
+15.3 Documentation Generation
 
 ```bash
 maia docs --output=docs/
 ```
 
-14.4 README.md Structure
+15.4 README.md Structure
 
 ```markdown
 # Project Name
@@ -997,9 +1194,9 @@ MIT License - see LICENSE
 
 ---
 
-## Part 15: Compiler Implementation
+## Part 16: Compiler Implementation
 
-### 15.1 Backends
+### 16.1 Backends
 
 | Architecture | Status | Output Format |
 |--------------|--------|---------------|
@@ -1008,14 +1205,14 @@ MIT License - see LICENSE
 | RISC-V | ✅ | ELF |
 | WebAssembly | ✅ | WASM |
 
-### 15.2 Self-Hosting
+### 16.2 Self-Hosting
 
 The Maia compiler is self-hosted:
 1. Stage 0: Zig compiler (bootstrap)
 2. Stage 1: Maia compiler (compiled by Zig)
 3. Stage 2: Maia compiler (compiled by Stage 1)
 
-### 15.3 Compilation Flags
+### 16.3 Compilation Flags
 
 ```bash
 maia build --target=x86_64-linux --release
@@ -1025,9 +1222,9 @@ maia build --emit-llvm --output=output.ll
 
 ---
 
-Part 16: Versioning
+Part 17: Versioning
 
-16.1 Version Scheme: major.minor.development
+17.1 Version Scheme: major.minor.development
 
 Stage Minor Development Example
 Pre-alpha 0 1-99 0.0.1
@@ -1037,88 +1234,110 @@ RC 3 1-99 0.3.2
 Stable 4+ 0 1.0.0
 Patch 4+ 1-99 1.1.5
 
-16.2 Compatibility Rules
+17.2 Compatibility Rules
 
-```yaml
-compatibility:
-  same_major: compatible
-  major_increase: breaking
-  minor_increase: new_features_backward_compatible
-  development_increase: bug_fixes_only
+```toml
+# version.toml
+[compatibility]
+same_major = "compatible"
+major_increase = "breaking"
+minor_increase = "new_features_backward_compatible"
+development_increase = "bug_fixes_only"
 ```
 
 ---
 
-Part 17: Grammar (EBNF)
+Part 18: Tools
 
-```ebnf
-(* Core syntax *)
-program         = { module | statement }
-module          = "module" ident ";" { declaration }
-declaration     = var_decl | const_decl | func_decl | proc_decl | type_decl
+18.1 loki (Modal Editor)
 
-var_decl        = "var" ident { "," ident } ":" type [ "=" expr ]
-const_decl      = "const" ident ":" type "=" expr
-func_decl       = [ "async" ] "function" ident "(" [ params ] ")" ":" type [ ";" ] block
-proc_decl       = [ "async" ] "procedure" ident "(" [ params ] ")" [ ";" ] block
-type_decl       = "type" ident "=" type
+```toml
+# tools/loki.toml
+[tool]
+name = "loki"
+type = "modal_editor"
+language = "Maia + Koda"
+version = "0.0.2"
 
-block           = "begin" { statement } "end"
+[features]
+terminal_raw_mode = true
+buffer_management = true
+selection_management = true
+key_mapping = true
+mode_system = ["normal", "insert", "visual", "visual_line", "visual_block", "command"]
+extension_system = true
+syntax_highlighting = true
+lsp_integration = true
+git_integration = true
+```
 
-statement       = assignment | if_stmt | for_stmt | while_stmt | match_stmt
-                | return_stmt | defer_stmt | expr ";"
+18.2 doobie (Documentation Reader)
 
-assignment      = ident [ "[" expr "]" ] assign_op expr
-assign_op       = ":=" | "+=" | "-=" | "*=" | "/=" | "%="
+```toml
+# tools/doobie.toml
+[tool]
+name = "doobie"
+type = "documentation_reader"
+language = "Koda"
+version = "0.0.2"
 
-if_stmt         = "if" expr "then" block { "elsif" expr "then" block } [ "else" block ] "end"
+[features]
+markdown_parsing = true
+terminal_rendering = true
+navigation = true
+full_text_search = true
+help_system = true
+```
 
-for_stmt        = "for" ident "in" range "do" block "end"
-                | "for" ident "," ident "in" expr "do" block "end"
+18.3 pssh (POSIX Shell)
 
-while_stmt      = "while" expr "do" block "end"
+```toml
+# tools/pssh.toml
+[tool]
+name = "pssh"
+type = "posix_shell"
+language = "Koda"
+version = "0.0.2"
+compliance = "POSIX.1-2024"
 
-match_stmt      = "match" expr "{" { match_case } "}"
-match_case      = pattern "=>" block ","
+[features]
+job_control = true
+pipelines = true
+redirections = true
+command_substitution = true
+variable_expansion = true
+```
 
-return_stmt     = "return" [ expr ]
+18.4 pkg (Package Manager)
 
-defer_stmt      = "defer" expr
+```toml
+# tools/pkg.toml
+[tool]
+name = "pkg"
+type = "package_manager"
+language = "Koda"
+version = "0.0.2"
 
-(* Ownership *)
-type            = primitive_type | composite_type | qualified_type
-qualified_type  = [ "own" | "ref" | "mut" | "rc" | "weak" ] type
-
-(* Concurrency *)
-actor_decl      = "actor" ident "{" { behavior_decl | field_decl } "}"
-behavior_decl   = "behavior" ident "(" [ params ] ")" block
-channel_decl    = "channel(" type ")"
-spawn_stmt      = "spawn" expr
-await_expr      = "await" expr
-
-(* Safety *)
-safe_block      = "safe" "do" block "end"
-unsafe_block    = "unsafe" "do" block "end"
-
-(* FFI *)
-extern_decl     = "extern" string_literal function_decl
-link_attr       = "@link(" string_literal [ "," "static:" bool ] ")"
-export_attr     = "@export(" string_literal [ "," "name:" string_literal ] ")"
-
-(* Comptime *)
-comptime_attr   = "@comptime"
-comptime_func   = "@comptime" function_decl
+[features]
+install = true
+remove = true
+search = true
+update = true
+list = true
+create = true
+publish = true
 ```
 
 ---
 
-Part 18: Complete Source Example
+Part 19: Complete Source Example
 
-18.1 Maia Example
+19.1 Maia Example
 
 ```pascal
 /* math.maia
    This module provides basic mathematical functions
+   Version: 0.0.2
 */
 
 module Math
@@ -1137,7 +1356,7 @@ export function add(a: int32, b: int32): int32
 /// @param a The number to subtract from
 /// @param b The number to subtract
 /// @return The difference a - b
-/// @since 1.0.0
+/// @since 0.0.2
 ///
 export function subtract(a: int32, b: int32): int32
 
@@ -1166,7 +1385,7 @@ begin
 end
 ```
 
-18.2 Koda Example
+19.2 Koda Example
 
 ```koda
 /* webserver.koda - Simple web server */
@@ -1186,7 +1405,7 @@ begin
     app.get("/api/status", |req| {
         return {
             status = "ok",
-            version = "1.0.0",
+            version = "0.0.2",
             timestamp = Time.now(),
         }
     })
@@ -1198,82 +1417,58 @@ end
 
 ---
 
-Part 19: License
+Part 20: File Extensions
 
-MIT License
+```toml
+# extensions.toml
+[maia]
+source = ".maia"
+module = ".maia"
+interface = ".mai"
+object = ".o"
+static_lib = ".a"
+shared_lib = [".so", ".dylib", ".dll"]
 
-```text
-Copyright (c) 2026 Purging Light Technologies and Contributors
+[koda]
+script = ".koda"
+module = ".koda"
+build_script = "build.koda"
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+[config]
+project = "maia.toml"
+package = "package.toml"
+build = ".maia/build.toml"
+repo = ".maia/repo.toml"
+ci = ".maia/ci.toml"
+user = ".maiarc.toml"
+koda_user = ".kodarc.toml"
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+[documentation]
+main = "README.md"
+contributing = "CONTRIBUTING.md"
+changelog = "CHANGELOG.md"
+license = "LICENSE"
 ```
 
 ---
 
-Appendix A: File Extensions
-
-```yaml
-maia:
-  source: .maia
-  module: .maia
-  interface: .mai
-  object: .o
-  static_lib: .a
-  shared_lib: .so, .dylib, .dll
-
-koda:
-  script: .koda
-  module: .koda
-  build_script: build.koda
-
-config:
-  project: maia.toml
-  package: package.toml
-  build: .maia/build.toml
-  repo: .maia/repo.toml
-  user: .kodarc.toml
-
-documentation:
-  main: README.md
-  contributing: CONTRIBUTING.md
-  changelog: CHANGELOG.md
-  license: LICENSE
-```
-
----
-
-Appendix B: Change Log
+Appendix A: Change Log
 
 Version Date Changes
-0.0.1 2026-04-14 Initial specification release
+0.0.1 2026-04-14 Initial specification
+0.0.2 2026-04-17 Added Tier 1 platform support (Linux, Windows, macOS, FreeBSD, OpenBSD, NetBSD, DragonFlyBSD); Added TOML-only configuration; Added loki and doobie tools; Updated comment syntax; Added platform detection
 
 ---
 
-Appendix C: Document Information
+Appendix B: Document Information
 
 ```toml
 # spec.toml
 [document]
 title = "MaiaKoda Language Specification"
-version = "0.0.1"
+version = "0.0.2"
 status = "pre-alpha"
-date = "2026-04-14"
+date = "2026-04-17"
 
 [document.copyright]
 holder = "Purging Light Technologies"
@@ -1287,4 +1482,4 @@ documentation = "GitHub Markdown"
 
 ---
 
-End of Specification v0.0.1
+End of MaiaKoda Language Specification v0.0.2
