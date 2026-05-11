@@ -1,0 +1,283 @@
+/// Maia self-hosted compiler — main entry point.
+/// Usage: maia [--target TARGET] [--output OUTPUT] [--emit-ir] <source.maia>
+///   --target  linux-x86_64 | wasm32   (default: linux-x86_64)
+///   --output  <path>
+///   --emit-ir dump IR summary to stderr
+
+module Main
+
+use Lexer
+use AST
+use Parser
+use Sema
+use IR
+use Assembler
+use Codegen_X86_64
+use Linker
+
+extern function maia_mmap(len: uint64): uint64
+extern function maia_open(path: uint64): int32
+extern function maia_read(fd: int32, buf: uint64, count: uint64): int64
+extern function maia_close(fd: int32)
+extern function maia_fsize(fd: int32): uint64
+extern function maia_exit(code: int32)
+extern function maia_write(fd: int32, buf: uint64, count: uint64): int64
+extern function load_byte(addr: uint64): int32
+extern function store_byte(addr: uint64, v: int32)
+extern function store32(addr: uint64, v: int32)
+extern function store64(addr: uint64, v: uint64)
+extern function load32(addr: uint64): int32
+extern function load64(addr: uint64): uint64
+
+/* ── Argument parsing ────────────────────────────────────────────────────────── */
+/* argv is passed as (argc: int32, argv_ptr: uint64) to main(). */
+/* Each argv[i] is a null-terminated pointer. */
+
+function arg_len(p: uint64): uint32 begin
+    var i: uint32 := 0
+    while load_byte(p + i as uint64) != 0 do i := i + 1 end
+    return i
+end
+
+function arg_eq(p: uint64, s: string): bool begin
+    var sp := s as uint64
+    var i: uint32 := 0
+    loop
+        var a := load_byte(p + i as uint64)
+        var b := load_byte(sp + i as uint64)
+        if a != b then return false end
+        if a == 0 then return true end
+        i := i + 1
+    end
+    return true
+end
+
+/* ── Fatal error ─────────────────────────────────────────────────────────────── */
+
+procedure die(msg: string) begin
+    var mp := msg as uint64
+    var mlen: uint32 := 0
+    while load_byte(mp + mlen as uint64) != 0 do mlen := mlen + 1 end
+    maia_write(2, mp, mlen as uint64)
+    maia_write(2, "\n" as uint64, 1)
+    maia_exit(1)
+end
+
+/* ── Print helpers ───────────────────────────────────────────────────────────── */
+
+procedure print_str(fd: int32, s: string) begin
+    var p := s as uint64
+    var n: uint32 := 0
+    while load_byte(p + n as uint64) != 0 do n := n + 1 end
+    maia_write(fd, p, n as uint64)
+end
+
+procedure print_u32(fd: int32, v: uint32) begin
+    if v == 0 then
+    maia_write(fd, "0" as uint64, 1)
+        return
+    end
+    var digits := maia_mmap(32)
+    var count: uint32 := 0
+    var x := v
+    while x > 0 do
+        store_byte(digits + count as uint64, (48 + (x % 10) as int32) as int32)
+        count := count + 1
+        x := x / 10
+    end
+    /* Reverse and print */
+    var rev := maia_mmap(32)
+    var i: uint32 := 0
+    while i < count do
+        store_byte(rev + i as uint64, load_byte(digits + (count - 1 - i) as uint64))
+        i := i + 1
+    end
+    maia_write(fd, rev, count as uint64)
+end
+
+/* ── Read a source file entirely into a mmap'd buffer ───────────────────────── */
+
+function read_source_file(path: uint64): uint64 begin
+    var fd := maia_open(path)
+    if fd < 0 then die("cannot open source file") end
+    var size := maia_fsize(fd)
+    var buf  := maia_mmap(size + 1)  /* +1 for safety */
+    var n    := maia_read(fd, buf, size)
+    if n < 0 then die("error reading source file") end
+    maia_close(fd)
+    return buf
+end
+
+function source_len(path: uint64): uint32 begin
+    var fd := maia_open(path)
+    if fd < 0 then return 0 end
+    var size := maia_fsize(fd)
+    maia_close(fd)
+    return size as uint32
+end
+
+/* ── Stem extraction (last path component, strip .maia) ──────────────────────── */
+
+function derive_output_path(src_path: uint64): uint64 begin
+    /* Find last '/' or start */
+    var i: uint32 := 0
+    var last_slash: uint32 := 0
+    while load_byte(src_path + i as uint64) != 0 do
+        if load_byte(src_path + i as uint64) == 47 then last_slash := i + 1 end
+        i := i + 1
+    end
+    var len := i - last_slash
+    var out := maia_mmap(len as uint64 + 4)
+    var j: uint32 := 0
+    while j < len do
+        var c := load_byte(src_path + last_slash as uint64 + j as uint64)
+        /* Stop at '.' */
+        if c == 46 then break end
+        store_byte(out + j as uint64, c)
+        j := j + 1
+    end
+    store_byte(out + j as uint64, 0)
+    return out
+end
+
+/* ── Main entry point ────────────────────────────────────────────────────────── */
+
+/* ── Main entry point ────────────────────────────────────────────────────────── */
+
+procedure main(argc: int32, argv: uint64) begin
+    /* Simple arg parsing with minimal control flow */
+    var source_path: uint64 := 0
+    var output_path: uint64 := 0
+    var emit_ir: bool := false
+
+    /* Arg scan: same pattern as test_exact_main.maia (confirmed working) */
+    var i: int32 := 1
+    while i < argc do
+        var arg := load64(argv + (i as uint64) * 8)
+        var is_o_flag := arg_eq(arg, "-o") or arg_eq(arg, "--output")
+        var is_emit_flag := arg_eq(arg, "--emit-ir")
+        if is_o_flag then
+            i := i + 1
+            if i < argc then
+                output_path := load64(argv + (i as uint64) * 8)
+            end
+        end
+        if is_emit_flag then
+            emit_ir := true
+        end
+        if not is_o_flag then
+            if not is_emit_flag then
+                source_path := arg
+            end
+        end
+        i := i + 1
+    end
+
+    if source_path == 0 then
+        print_str(1, "usage: maia [--target TARGET] [--output OUTPUT] [--emit-ir] <source.maia>\n")
+        maia_exit(1)
+    end
+
+    /* Derive output path if not given */
+    if output_path == 0 then
+        output_path := derive_output_path(source_path)
+    end
+
+    /* ── Read source ─────────────────────────────────────────────────────────── */
+    var src_len_v := source_len(source_path)
+    var src_buf   := read_source_file(source_path)
+
+    /* ── Lex ─────────────────────────────────────────────────────────────────── */
+    var lex := lexer_new(src_buf, src_len_v)
+    var tok_arr := lexer_tokenize(lex)
+
+    print_str(1, "lexed ")
+    print_u32(1, tok_arr.len)
+    print_str(1, " tokens\n")
+
+    if tok_arr.len == 0 then die("no tokens") end
+
+    /* ── Parse ───────────────────────────────────────────────────────────────── */
+    var parser_ := parser_new(tok_arr.ptr, tok_arr.len, src_buf, src_len_v)
+    var mod := parse_module(parser_)
+
+    print_str(1, "parsed ")
+    print_u32(1, mod.decl_count)
+    print_str(1, " declarations\n")
+
+    if parser_.diag_count > 0 then
+        print_str(2, "parse errors: ")
+        print_u32(2, parser_.diag_count as uint32)
+        print_str(2, "\n")
+        maia_exit(1)
+    end
+
+    /* ── Semantic analysis ───────────────────────────────────────────────────── */
+    var sema_ := sema_new(src_buf, src_len_v)
+    sema_analyze_module(sema_, mod)
+
+    if sema_has_errors(sema_) then
+        print_str(2, "semantic errors\n")
+        maia_exit(1)
+    end
+
+    /* ── IR generation ───────────────────────────────────────────────────────── */
+    var ir_mod := irmod_new()
+    /* ir_mod_buf layout (must match offsets used by ir.maia and codegen/x86_64.maia):
+       @0:  fn_arr (uint64)
+       @8:  fn_count (uint32)
+       @24: string_pool ptr (uint64)
+       @32: str_count (uint32)
+       The self-hosted IR builder and codegen read/write these specific offsets. */
+    var ir_mod_buf := maia_mmap(128)
+    store64(ir_mod_buf,      ir_mod.functions)
+    store32(ir_mod_buf + 8,  ir_mod.fn_count as int32)
+    store64(ir_mod_buf + 24, ir_mod.string_pool)
+    store32(ir_mod_buf + 32, ir_mod.str_count as int32)
+
+    var sema_buf := maia_mmap(128)  /* pack Sema fields for passing by pointer */
+    store64(sema_buf + 40, src_buf)  /* sema.src at offset 40 (see sema.maia) */
+
+    var builder := builder_new(ir_mod_buf, sema_buf, src_buf, src_len_v)
+    builder_lower_module(builder, mod)
+
+    var fn_count := load32(ir_mod_buf + 8) as uint32
+    print_str(1, "lowered ")
+    print_u32(1, fn_count)
+    print_str(1, " functions to IR\n")
+
+    if emit_ir then
+        print_str(2, "[IR emit not yet implemented in self-hosted compiler]\n")
+    end
+
+    /* ── Code generation: linux-x86_64 ───────────────────────────────────────── */
+    var cg := codegen_new()
+    var cg_result := codegen_generate(cg, ir_mod_buf)
+
+    print_str(1, "generated ")
+    print_u32(1, cg_result.text_len)
+    print_str(1, " bytes of text\n")
+
+    /* ── Link ────────────────────────────────────────────────────────────────── */
+    /* Build LinkerInput */
+    var entry_name := "main" as uint64
+    var linker_in := LinkerInput {
+        .text_ptr     = cg_result.text_ptr,
+        .text_len     = cg_result.text_len,
+        .rodata_ptr   = cg_result.rodata_ptr,
+        .rodata_len   = cg_result.rodata_len,
+        .syms_ptr     = cg_result.syms_ptr,
+        .sym_count    = cg_result.sym_count,
+        .extern_sites = cg_result.extern_sites,
+        .string_refs  = cg_result.string_refs,
+        .entry_name   = entry_name,
+        .entry_len    = 4,
+    }
+
+    linker_link(linker_in, output_path)
+
+    print_str(1, "wrote ")
+    /* Print output_path */
+    var opl := arg_len(output_path)
+    maia_write(1, output_path, opl as uint64)
+end

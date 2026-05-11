@@ -1,0 +1,227 @@
+/// Maia self-hosted compiler — AST node definitions.
+/// All nodes are stored in a flat arena; pointers are uint64 (arena offsets).
+
+module AST
+
+use Lexer
+
+/* ── Span ────────────────────────────────────────────────────────────────────── */
+
+type Span = struct {
+    start: uint32,
+    end_:  uint32,
+    line:  uint32,
+    col:   uint32,
+}
+
+/* ── Ownership qualifiers ────────────────────────────────────────────────────── */
+
+const OWN_NONE: int32 = 0
+const OWN_OWN:  int32 = 1
+const OWN_REF:  int32 = 2
+const OWN_MUT:  int32 = 3
+const OWN_RC:   int32 = 4
+const OWN_WEAK: int32 = 5
+const OWN_ISO:  int32 = 6
+const OWN_TRN:  int32 = 7
+const OWN_VAL:  int32 = 8
+const OWN_BOX:  int32 = 9
+const OWN_TAG:  int32 = 10
+
+/* ── Binary operators ────────────────────────────────────────────────────────── */
+
+const BINOP_ADD:        int32 = 0
+const BINOP_SUB:        int32 = 1
+const BINOP_MUL:        int32 = 2
+const BINOP_DIV:        int32 = 3
+const BINOP_MOD:        int32 = 4
+const BINOP_INT_DIV:    int32 = 5
+const BINOP_EQ:         int32 = 6
+const BINOP_NE:         int32 = 7
+const BINOP_LT:         int32 = 8
+const BINOP_GT:         int32 = 9
+const BINOP_LE:         int32 = 10
+const BINOP_GE:         int32 = 11
+const BINOP_AND:        int32 = 12
+const BINOP_OR:         int32 = 13
+const BINOP_BIT_AND:    int32 = 14
+const BINOP_BIT_OR:     int32 = 15
+const BINOP_BIT_XOR:    int32 = 16
+const BINOP_SHL:        int32 = 17
+const BINOP_SHR:        int32 = 18
+const BINOP_RANGE:      int32 = 19
+const BINOP_RANGE_EXCL: int32 = 20
+const BINOP_PIPELINE:   int32 = 21
+const BINOP_ASSIGN:     int32 = 22
+const BINOP_ADD_ASSIGN: int32 = 23
+const BINOP_SUB_ASSIGN: int32 = 24
+const BINOP_MUL_ASSIGN: int32 = 25
+const BINOP_DIV_ASSIGN: int32 = 26
+const BINOP_MOD_ASSIGN: int32 = 27
+const BINOP_AND_ASSIGN: int32 = 28
+const BINOP_OR_ASSIGN:  int32 = 29
+const BINOP_XOR_ASSIGN: int32 = 30
+const BINOP_SHL_ASSIGN: int32 = 31
+const BINOP_SHR_ASSIGN: int32 = 32
+
+/* ── Unary operators ─────────────────────────────────────────────────────────── */
+
+const UNOP_NEG:     int32 = 0
+const UNOP_NOT:     int32 = 1
+const UNOP_BIT_NOT: int32 = 2
+const UNOP_ADDR_OF: int32 = 3
+const UNOP_DEREF:   int32 = 4
+
+/* ── Node kinds ──────────────────────────────────────────────────────────────── */
+/* All AST nodes are tagged-union style, discriminated by a kind int32. */
+/* Each node is a fixed-size struct in an arena; child nodes are stored as */
+/* arena-relative uint64 offsets. */
+
+/* Expression kinds */
+const EXPR_INT_LIT:       int32 = 0
+const EXPR_FLOAT_LIT:     int32 = 1
+const EXPR_STRING_LIT:    int32 = 2
+const EXPR_BOOL_LIT:      int32 = 3
+const EXPR_NULL_LIT:      int32 = 4
+const EXPR_IDENT:         int32 = 5
+const EXPR_BINARY:        int32 = 6
+const EXPR_UNARY:         int32 = 7
+const EXPR_CAST:          int32 = 8
+const EXPR_CALL:          int32 = 9
+const EXPR_METHOD_CALL:   int32 = 10
+const EXPR_FIELD:         int32 = 11
+const EXPR_INDEX:         int32 = 12
+const EXPR_SLICE_EXPR:    int32 = 13
+const EXPR_STRUCT_LIT:    int32 = 14
+const EXPR_ARRAY_LIT:     int32 = 15
+const EXPR_CLOSURE:       int32 = 16
+const EXPR_CONSUME:       int32 = 17
+const EXPR_AWAIT:         int32 = 18
+const EXPR_SPAWN:         int32 = 19
+const EXPR_BUILTIN_CALL:  int32 = 20
+const EXPR_OPTION_CAPTURE:int32 = 21
+const EXPR_DEFAULT:       int32 = 22
+const EXPR_GROUPED:       int32 = 23
+
+/* Statement kinds */
+const STMT_VAR_DECL:    int32 = 30
+const STMT_CONST_DECL:  int32 = 31
+const STMT_ASSIGN:      int32 = 32
+const STMT_EXPR:        int32 = 33
+const STMT_BLOCK:       int32 = 34
+const STMT_IF:          int32 = 35
+const STMT_WHILE:       int32 = 36
+const STMT_FOR:         int32 = 37
+const STMT_LOOP:        int32 = 38
+const STMT_BREAK:       int32 = 39
+const STMT_CONTINUE:    int32 = 40
+const STMT_RETURN:      int32 = 41
+const STMT_MATCH:       int32 = 42
+const STMT_DEFER:       int32 = 43
+const STMT_SAFE:        int32 = 44
+const STMT_UNSAFE:      int32 = 45
+
+/* Declaration kinds */
+const DECL_MODULE:  int32 = 50
+const DECL_USE:     int32 = 51
+const DECL_FUNC:    int32 = 52
+const DECL_PROC:    int32 = 53
+const DECL_TYPE:    int32 = 54
+const DECL_CONST:   int32 = 55
+const DECL_VAR:     int32 = 56
+const DECL_ACTOR:   int32 = 57
+const DECL_EXTERN:  int32 = 58
+
+/* Type expression kinds */
+const TYPE_NAMED:    int32 = 60
+const TYPE_OPTIONAL: int32 = 61
+const TYPE_POINTER:  int32 = 62
+const TYPE_ARRAY:    int32 = 63
+const TYPE_SLICE:    int32 = 64
+const TYPE_GENERIC:  int32 = 65
+const TYPE_OWNED:    int32 = 66
+const TYPE_FUNC:     int32 = 67
+const TYPE_UNIT:     int32 = 68
+
+/* ── Arena-based node storage ────────────────────────────────────────────────── */
+/* Every AST node is a small fixed-size struct allocated from the arena. */
+/* Pointers between nodes are expressed as uint64 arena-base offsets. */
+/* */
+/* The "Node" header (present at the start of every node allocation): */
+/*   kind:  int32   — EXPR_*, STMT_*, DECL_*, TYPE_* constant */
+/*   _pad:  int32   — alignment padding */
+/*   span_start: uint32 */
+/*   span_end:   uint32 */
+/*   span_line:  uint32 */
+/*   span_col:   uint32 */
+/* */
+/* This header is 24 bytes.  Specific fields follow immediately after. */
+
+const NODE_HDR_BYTES: uint32 = 24
+
+/* ── AST Arena ──────────────────────────────────────────────────────────────── */
+
+type AstArena = struct {
+    base: uint64,
+    pos:  uint64,
+    cap:  uint64,
+}
+
+extern function maia_mmap(len: uint64): uint64
+
+function ast_arena_new(cap: uint64): AstArena begin
+    var base := maia_mmap(cap)
+    return AstArena { .base = base, .pos = 0, .cap = cap }
+end
+
+function ast_alloc(arena: mut AstArena, nbytes: uint32): uint64 begin
+    /* 8-byte align */
+    var aligned := ((arena.pos + 7) / 8) * 8
+    arena.pos := aligned + nbytes as uint64
+    return arena.base + aligned
+end
+
+/* ── Node write helpers ──────────────────────────────────────────────────────── */
+/* Low-level: write a 32-bit int to a memory address. */
+extern function store32(addr: uint64, v: int32)
+extern function store64(addr: uint64, v: uint64)
+extern function load32(addr: uint64): int32
+extern function load64(addr: uint64): uint64
+
+procedure node_set_kind(node: uint64, kind: int32) begin
+    store32(node, kind)
+end
+
+procedure node_set_span(node: uint64, s: Span) begin
+    store32(node + 8,  s.start as int32)
+    store32(node + 12, s.end_ as int32)
+    store32(node + 16, s.line as int32)
+    store32(node + 20, s.col as int32)
+end
+
+function node_kind(node: uint64): int32 begin
+    return load32(node)
+end
+
+function node_span_start(node: uint64): uint32 begin
+    return load32(node + 8) as uint32
+end
+
+function node_span_line(node: uint64): uint32 begin
+    return load32(node + 16) as uint32
+end
+
+function node_span_col(node: uint64): uint32 begin
+    return load32(node + 20) as uint32
+end
+
+/* ── Module ──────────────────────────────────────────────────────────────────── */
+
+type Module = struct {
+    name:       uint64,  /* pointer to name string (0 = anonymous) */
+    name_len:   uint32,
+    decls:      uint64,  /* pointer to array of node pointers (uint64[]) */
+    decl_count: uint32,
+    src:        uint64,
+    src_len:    uint32,
+}

@@ -1,0 +1,583 @@
+/// Maia self-hosted compiler — x86_64 assembler.
+/// Encodes individual instructions into a growable byte buffer,
+/// with a two-pass label/relocation system.
+
+module Assembler
+
+extern function maia_mmap(len: uint64): uint64
+extern function store32(addr: uint64, v: int32)
+extern function store64(addr: uint64, v: uint64)
+extern function load32(addr: uint64): int32
+extern function load64(addr: uint64): uint64
+extern function load_byte(addr: uint64): int32
+extern function store_byte(addr: uint64, v: int32)
+
+/* ── Physical registers ──────────────────────────────────────────────────────── */
+
+const REG_RAX: int32 = 0
+const REG_RCX: int32 = 1
+const REG_RDX: int32 = 2
+const REG_RBX: int32 = 3
+const REG_RSP: int32 = 4
+const REG_RBP: int32 = 5
+const REG_RSI: int32 = 6
+const REG_RDI: int32 = 7
+const REG_R8:  int32 = 8
+const REG_R9:  int32 = 9
+const REG_R10: int32 = 10
+const REG_R11: int32 = 11
+const REG_R12: int32 = 12
+const REG_R13: int32 = 13
+const REG_R14: int32 = 14
+const REG_R15: int32 = 15
+const REG_AL:  int32 = 100  /* 8-bit alias for rax */
+
+/* SysV AMD64 ABI argument registers (in order) */
+const ARG0: int32 = REG_RDI
+const ARG1: int32 = REG_RSI
+const ARG2: int32 = REG_RDX
+const ARG3: int32 = REG_RCX
+const ARG4: int32 = REG_R8
+const ARG5: int32 = REG_R9
+
+/* ── Byte buffer ─────────────────────────────────────────────────────────────── */
+
+type AsmBuf = struct {
+    ptr: uint64,
+    len: uint32,
+    cap: uint32,
+}
+
+function asmbuf_new(): AsmBuf begin
+    const CAP: uint32 = 65536
+    var data_ptr := maia_mmap(CAP as uint64)
+    /* Build AsmBuf manually: ptr@0(8), len@8(4), cap@12(4) */
+    var buf := maia_mmap(16)
+    store64(buf + 0,  data_ptr)
+    store32(buf + 8,  0)
+    store32(buf + 12, CAP as int32)
+    return buf as AsmBuf
+end
+
+/* AsmBuf field offsets: ptr@0(uint64), len@8(uint32), cap@12(uint32) */
+
+procedure asmbuf_emit(buf: mut AsmBuf, byte_: int32) begin
+    var r   := buf as uint64
+    var ptr := load64(r + 0)   /* AsmBuf.ptr @0 */
+    var len := load32(r + 8) as uint32  /* AsmBuf.len @8 */
+    store_byte(ptr + len as uint64, byte_)
+    store32(r + 8, (len + 1) as int32)
+end
+
+procedure asmbuf_emit2(buf: mut AsmBuf, b0: int32, b1: int32) begin
+    var sb0 := b0   /* save before any calls clobber rsi */
+    var r   := buf as uint64
+    var ptr := load64(r + 0)
+    var len := load32(r + 8) as uint32
+    store_byte(ptr + len as uint64,       sb0)
+    store_byte(ptr + len as uint64 + 1,   b1)
+    store32(r + 8, (len + 2) as int32)
+end
+
+
+procedure asmbuf_emit_u32(buf: mut AsmBuf, v: uint32) begin
+    asmbuf_emit(buf, (v       and 0xff) as int32)
+    asmbuf_emit(buf, ((v >>  8) and 0xff) as int32)
+    asmbuf_emit(buf, ((v >> 16) and 0xff) as int32)
+    asmbuf_emit(buf, ((v >> 24) and 0xff) as int32)
+end
+
+procedure asmbuf_emit_u64(buf: mut AsmBuf, v: uint64) begin
+    asmbuf_emit_u32(buf, (v and 0xffffffff) as uint32)
+    asmbuf_emit_u32(buf, ((v >> 32) and 0xffffffff) as uint32)
+end
+
+procedure asmbuf_emit_i32(buf: mut AsmBuf, v: int32) begin
+    asmbuf_emit_u32(buf, v as uint32)
+end
+
+function asmbuf_cur(buf: ref AsmBuf): uint32 begin
+    return load32(buf as uint64 + 8) as uint32   /* AsmBuf.len @8 */
+end
+
+procedure asmbuf_patch_i32(buf: ref AsmBuf, off: uint32, v: int32) begin
+    var ptr := load64(buf as uint64 + 0)
+    store_byte(ptr + off as uint64,       (v        and 0xff) as int32)
+    store_byte(ptr + off as uint64 + 1,   ((v >>  8) and 0xff) as int32)
+    store_byte(ptr + off as uint64 + 2,   ((v >> 16) and 0xff) as int32)
+    store_byte(ptr + off as uint64 + 3,   ((v >> 24) and 0xff) as int32)
+end
+
+/* ── REX prefix helpers ──────────────────────────────────────────────────────── */
+
+function rex_w(reg: int32, rm: int32): int32 begin
+    /* REX.W = 48, REX.R if reg >= 8, REX.B if rm >= 8 */
+    var rex := 0x48
+    if reg >= 8 then rex := rex or 0x04 end
+    if rm  >= 8 then rex := rex or 0x01 end
+    return rex
+end
+
+procedure emit_rex_w(buf: mut AsmBuf, reg: int32, rm: int32) begin
+    asmbuf_emit(buf, rex_w(reg, rm))
+end
+
+/* ModRM byte: mod=11 (register operands), reg field, r/m field */
+function modrm_rr(reg: int32, rm: int32): int32 begin
+    return 0xC0 or ((reg and 7) << 3) or (rm and 7)
+end
+
+/* ModRM for [rbp + disp8]: mod=01, reg, r/m=rbp(5) */
+function modrm_rbp_disp8(reg: int32): int32 begin
+    return 0x45 or ((reg and 7) << 3)
+end
+
+/* ── Instruction emitters ────────────────────────────────────────────────────── */
+
+/* push reg */
+procedure emit_push_r(buf: mut AsmBuf, reg: int32) begin
+    if reg >= 8 then asmbuf_emit(buf, 0x41) end
+    asmbuf_emit(buf, 0x50 or (reg and 7))
+end
+
+/* pop reg */
+procedure emit_pop_r(buf: mut AsmBuf, reg: int32) begin
+    if reg >= 8 then asmbuf_emit(buf, 0x41) end
+    asmbuf_emit(buf, 0x58 or (reg and 7))
+end
+
+/* ret */
+procedure emit_ret(buf: mut AsmBuf) begin
+    asmbuf_emit(buf, 0xC3)
+end
+
+/* nop */
+procedure emit_nop(buf: mut AsmBuf) begin
+    asmbuf_emit(buf, 0x90)
+end
+
+/* ud2 */
+procedure emit_ud2(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x0B)
+end
+
+/* syscall */
+procedure emit_syscall(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x05)
+end
+
+/* mov reg, reg  (REX.W + 89 /r) */
+procedure emit_mov_rr(buf: mut AsmBuf, dst: int32, src: int32) begin
+    var sdst := dst; var ssrc := src
+    emit_rex_w(buf, ssrc, sdst)
+    asmbuf_emit(buf, 0x89)
+    asmbuf_emit(buf, modrm_rr(ssrc, sdst))
+end
+
+/* mov reg, imm64  (REX.WB? + B8+r + imm64) */
+procedure emit_mov_ri64(buf: mut AsmBuf, dst: int32, imm: int64) begin
+    var sdst := dst   /* save before asmbuf_emit clobbers rsi */
+    var rex := 0x48
+    if sdst >= 8 then rex := rex or 0x01 end
+    asmbuf_emit(buf, rex)
+    asmbuf_emit(buf, 0xB8 or (sdst and 7))
+    asmbuf_emit_u64(buf, imm as uint64)
+end
+
+/* mov reg, imm32 (sign-extend)  (REX.W + C7 /0) */
+procedure emit_mov_ri32(buf: mut AsmBuf, dst: int32, imm: int32) begin
+    var sdst := dst   /* save before emit_rex_w clobbers rsi */
+    emit_rex_w(buf, 0, sdst)
+    asmbuf_emit(buf, 0xC7)
+    asmbuf_emit(buf, modrm_rr(0, sdst))
+    asmbuf_emit_i32(buf, imm)
+end
+
+/* add dst, src  (REX.W + 01 /r) */
+procedure emit_add_rr(buf: mut AsmBuf, dst: int32, src: int32) begin
+    var sdst := dst; var ssrc := src
+    emit_rex_w(buf, ssrc, sdst)
+    asmbuf_emit(buf, 0x01)
+    asmbuf_emit(buf, modrm_rr(ssrc, sdst))
+end
+
+/* sub dst, src  (REX.W + 29 /r) */
+procedure emit_sub_rr(buf: mut AsmBuf, dst: int32, src: int32) begin
+    var sdst := dst; var ssrc := src
+    emit_rex_w(buf, ssrc, sdst)
+    asmbuf_emit(buf, 0x29)
+    asmbuf_emit(buf, modrm_rr(ssrc, sdst))
+end
+
+/* sub reg, imm8  (REX.W + 83 /5 + imm8) */
+procedure emit_sub_ri8(buf: mut AsmBuf, dst: int32, imm: int32) begin
+    var sdst := dst
+    emit_rex_w(buf, 0, sdst)
+    asmbuf_emit(buf, 0x83)
+    asmbuf_emit(buf, modrm_rr(5, sdst))
+    asmbuf_emit(buf, imm and 0xff)
+end
+
+/* imul dst, src  (REX.W + 0F AF /r) */
+procedure emit_imul_rr(buf: mut AsmBuf, dst: int32, src: int32) begin
+    var sdst := dst; var ssrc := src
+    emit_rex_w(buf, sdst, ssrc)
+    asmbuf_emit2(buf, 0x0F, 0xAF)
+    asmbuf_emit(buf, modrm_rr(sdst, ssrc))
+end
+
+/* idiv src  (REX.W + F7 /7) */
+procedure emit_idiv_r(buf: mut AsmBuf, src: int32) begin
+    var ssrc := src
+    emit_rex_w(buf, 0, ssrc)
+    asmbuf_emit(buf, 0xF7)
+    asmbuf_emit(buf, modrm_rr(7, ssrc))
+end
+
+/* xor dst, src  (REX.W + 31 /r) */
+procedure emit_xor_rr(buf: mut AsmBuf, dst: int32, src: int32) begin
+    var sdst := dst; var ssrc := src
+    emit_rex_w(buf, ssrc, sdst)
+    asmbuf_emit(buf, 0x31)
+    asmbuf_emit(buf, modrm_rr(ssrc, sdst))
+end
+
+/* and dst, src  (REX.W + 21 /r) */
+procedure emit_and_rr(buf: mut AsmBuf, dst: int32, src: int32) begin
+    var sdst := dst; var ssrc := src
+    emit_rex_w(buf, ssrc, sdst)
+    asmbuf_emit(buf, 0x21)
+    asmbuf_emit(buf, modrm_rr(ssrc, sdst))
+end
+
+/* or dst, src  (REX.W + 09 /r) */
+procedure emit_or_rr(buf: mut AsmBuf, dst: int32, src: int32) begin
+    var sdst := dst; var ssrc := src
+    emit_rex_w(buf, ssrc, sdst)
+    asmbuf_emit(buf, 0x09)
+    asmbuf_emit(buf, modrm_rr(ssrc, sdst))
+end
+
+/* neg reg  (REX.W + F7 /3) */
+procedure emit_neg_r(buf: mut AsmBuf, reg: int32) begin
+    var sreg := reg
+    emit_rex_w(buf, 0, sreg)
+    asmbuf_emit(buf, 0xF7)
+    asmbuf_emit(buf, modrm_rr(3, sreg))
+end
+
+/* not reg  (REX.W + F7 /2) */
+procedure emit_not_r(buf: mut AsmBuf, reg: int32) begin
+    var sreg := reg
+    emit_rex_w(buf, 0, sreg)
+    asmbuf_emit(buf, 0xF7)
+    asmbuf_emit(buf, modrm_rr(2, sreg))
+end
+
+/* cmp dst, src  (REX.W + 3B /r) */
+procedure emit_cmp_rr(buf: mut AsmBuf, lhs: int32, rhs: int32) begin
+    var slhs := lhs; var srhs := rhs
+    emit_rex_w(buf, slhs, srhs)
+    asmbuf_emit(buf, 0x3B)
+    asmbuf_emit(buf, modrm_rr(slhs, srhs))
+end
+
+/* test dst, src  (REX.W + 85 /r) */
+procedure emit_test_rr(buf: mut AsmBuf, lhs: int32, rhs: int32) begin
+    var slhs := lhs; var srhs := rhs
+    emit_rex_w(buf, srhs, slhs)
+    asmbuf_emit(buf, 0x85)
+    asmbuf_emit(buf, modrm_rr(srhs, slhs))
+end
+
+/* sete al  (0F 94 C0) */
+procedure emit_sete(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x94); asmbuf_emit2(buf, 0xC0, 0x90)  /* sete al; nop */
+end
+
+/* setne al (0F 95 C0) */
+procedure emit_setne(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x95); asmbuf_emit2(buf, 0xC0, 0x90)
+end
+
+/* setl al  (0F 9C C0) */
+procedure emit_setl(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x9C); asmbuf_emit2(buf, 0xC0, 0x90)
+end
+
+/* setg al  (0F 9F C0) */
+procedure emit_setg(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x9F); asmbuf_emit2(buf, 0xC0, 0x90)
+end
+
+/* setle al (0F 9E C0) */
+procedure emit_setle(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x9E); asmbuf_emit2(buf, 0xC0, 0x90)
+end
+
+/* setge al (0F 9D C0) */
+procedure emit_setge(buf: mut AsmBuf) begin
+    asmbuf_emit2(buf, 0x0F, 0x9D); asmbuf_emit2(buf, 0xC0, 0x90)
+end
+
+/* movzx reg, al  (REX.W? + 0F B6 /r — zero-extend byte to 64-bit) */
+procedure emit_movzx_ral(buf: mut AsmBuf, dst: int32) begin
+    var sdst := dst
+    emit_rex_w(buf, sdst, REG_RAX)
+    asmbuf_emit2(buf, 0x0F, 0xB6)
+    asmbuf_emit(buf, modrm_rr(sdst, REG_RAX))
+end
+
+/* shl reg, cl  (REX.W + D3 /4) */
+procedure emit_shl_rcl(buf: mut AsmBuf, reg: int32) begin
+    var sreg := reg
+    emit_rex_w(buf, 0, sreg)
+    asmbuf_emit(buf, 0xD3)
+    asmbuf_emit(buf, modrm_rr(4, sreg))
+end
+
+/* shr reg, cl  (REX.W + D3 /5) */
+procedure emit_shr_rcl(buf: mut AsmBuf, reg: int32) begin
+    emit_rex_w(buf, 0, reg)
+    asmbuf_emit(buf, 0xD3)
+    asmbuf_emit(buf, modrm_rr(5, reg))
+end
+
+/* mov reg, [base]  (REX.W + 8B /r  mod=00) */
+procedure emit_mov_rm(buf: mut AsmBuf, dst: int32, base: int32) begin
+    emit_rex_w(buf, dst, base)
+    asmbuf_emit(buf, 0x8B)
+    /* mod=00, reg=dst, r/m=base */
+    if base == REG_RSP or base == REG_R12 then
+        /* SIB byte needed for rsp/r12 as base */
+        asmbuf_emit(buf, (dst and 7) << 3 or 4)  /* mod=00, reg, r/m=100 (SIB) */
+        asmbuf_emit(buf, 0x24)  /* SIB: ss=0, index=4(none), base=rsp */
+    else
+        asmbuf_emit(buf, (dst and 7) << 3 or (base and 7))
+    end
+end
+
+/* mov [base], src  (REX.W + 89 /r  mod=00) */
+procedure emit_mov_mr(buf: mut AsmBuf, base: int32, src: int32) begin
+    emit_rex_w(buf, src, base)
+    asmbuf_emit(buf, 0x89)
+    if base == REG_RSP or base == REG_R12 then
+        asmbuf_emit(buf, (src and 7) << 3 or 4)
+        asmbuf_emit(buf, 0x24)
+    else
+        asmbuf_emit(buf, (src and 7) << 3 or (base and 7))
+    end
+end
+
+/* mov reg, [base + idx*8]  (REX.W + 8B /r mod=00 SIB scale=8) */
+procedure emit_mov_rm_sib8(buf: mut AsmBuf, dst: int32, base: int32, idx: int32) begin
+    var need_rex_x := if idx >= 8 then 0x02 else 0 end
+    var need_rex_b := if base >= 8 then 0x01 else 0 end
+    var need_rex_r := if dst >= 8 then 0x04 else 0 end
+    asmbuf_emit(buf, 0x48 or need_rex_r or need_rex_x or need_rex_b)
+    asmbuf_emit(buf, 0x8B)
+    asmbuf_emit(buf, (dst and 7) << 3 or 4)  /* mod=00, reg=dst, r/m=100 (SIB) */
+    asmbuf_emit(buf, (3 << 6) or ((idx and 7) << 3) or (base and 7))  /* scale=8, idx, base */
+end
+
+/* mov [base + idx*8], src */
+procedure emit_mov_mr_sib8(buf: mut AsmBuf, base: int32, idx: int32, src: int32) begin
+    var need_rex_x := if idx >= 8 then 0x02 else 0 end
+    var need_rex_b := if base >= 8 then 0x01 else 0 end
+    var need_rex_r := if src >= 8 then 0x04 else 0 end
+    asmbuf_emit(buf, 0x48 or need_rex_r or need_rex_x or need_rex_b)
+    asmbuf_emit(buf, 0x89)
+    asmbuf_emit(buf, (src and 7) << 3 or 4)
+    asmbuf_emit(buf, (3 << 6) or ((idx and 7) << 3) or (base and 7))
+end
+
+/* mov reg, [rbp + disp8]  (REX.W + 8B /r mod=01) */
+procedure emit_mov_rbp_disp8(buf: mut AsmBuf, dst: int32, disp: int32) begin
+    emit_rex_w(buf, dst, REG_RBP)
+    asmbuf_emit(buf, 0x8B)
+    asmbuf_emit(buf, modrm_rbp_disp8(dst))
+    asmbuf_emit(buf, disp and 0xff)
+end
+
+/* mov [rbp + disp8], src  (REX.W + 89 /r mod=01) */
+procedure emit_mov_rbp_disp8_src(buf: mut AsmBuf, disp: int32, src: int32) begin
+    emit_rex_w(buf, src, REG_RBP)
+    asmbuf_emit(buf, 0x89)
+    asmbuf_emit(buf, 0x45 or ((src and 7) << 3))
+    asmbuf_emit(buf, disp and 0xff)
+end
+
+/* lea dst, [rbp + disp8]  (REX.W + 8D /r mod=01) */
+procedure emit_lea_rbp_disp8(buf: mut AsmBuf, dst: int32, disp: int32) begin
+    emit_rex_w(buf, dst, REG_RBP)
+    asmbuf_emit(buf, 0x8D)
+    asmbuf_emit(buf, modrm_rbp_disp8(dst))
+    asmbuf_emit(buf, disp and 0xff)
+end
+
+/* call rel32  (E8 + rel32) */
+/* Returns the offset of the rel32 field for later patching. */
+function emit_call_rel32(buf: mut AsmBuf): uint32 begin
+    asmbuf_emit(buf, 0xE8)
+    var off := asmbuf_cur(buf)
+    asmbuf_emit_i32(buf, 0)  /* placeholder */
+    return off
+end
+
+/* call *reg  (REX.W? + FF /2) */
+procedure emit_call_r(buf: mut AsmBuf, reg: int32) begin
+    if reg >= 8 then asmbuf_emit(buf, 0x41) end
+    asmbuf_emit(buf, 0xFF)
+    asmbuf_emit(buf, modrm_rr(2, reg))
+end
+
+/* jmp rel32  (E9 + rel32) */
+function emit_jmp_rel32(buf: mut AsmBuf): uint32 begin
+    asmbuf_emit(buf, 0xE9)
+    var off := asmbuf_cur(buf)
+    asmbuf_emit_i32(buf, 0)
+    return off
+end
+
+/* jne rel32  (0F 85 + rel32) */
+function emit_jne_rel32(buf: mut AsmBuf): uint32 begin
+    asmbuf_emit2(buf, 0x0F, 0x85)
+    var off := asmbuf_cur(buf)
+    asmbuf_emit_i32(buf, 0)
+    return off
+end
+
+/* Patch a rel32 branch so it jumps to target_off from the end of the instruction. */
+/* branch_imm_off = offset of the 4-byte immediate; instruction end = branch_imm_off + 4 */
+procedure patch_rel32(buf: ref AsmBuf, branch_imm_off: uint32, target_off: uint32) begin
+    var instr_end := branch_imm_off + 4
+    var rel := (target_off as int32) - (instr_end as int32)
+    asmbuf_patch_i32(buf, branch_imm_off, rel)
+end
+
+/* ── Label / relocation system ───────────────────────────────────────────────── */
+/* Labels are uint32 IDs.  A relocation records where to patch and which label. */
+
+type LabelMap = struct {
+    offsets:  uint64,  /* label_id → offset (uint32), -1 = undefined */
+    cap:      uint32,
+    relocs:   uint64,  /* (site_off: uint32, label_id: uint32) pairs */
+    reloc_cnt:uint32,
+}
+
+const UNDEF_LABEL: uint32 = 4294967295  /* 0xFFFFFFFF */
+
+/* LabelMap field offsets: offsets@0(uint64), cap@8(uint32), relocs@12(uint64), reloc_cnt@20(uint32) */
+
+function labelmap_new(): LabelMap begin
+    const CAP: uint32 = 1024
+    var offsets := maia_mmap((CAP as uint64) * 4)
+    var i: uint32 := 0
+    while i < CAP do
+        store32(offsets + (i as uint64) * 4, UNDEF_LABEL as int32)
+        i := i + 1
+    end
+    var relocs := maia_mmap((CAP as uint64) * 8)
+    /* Build LabelMap manually: offsets@0(8), cap@8(4), relocs@12(8), reloc_cnt@20(4) */
+    var lm := maia_mmap(24)
+    store64(lm + 0,  offsets)
+    store32(lm + 8,  CAP as int32)
+    store64(lm + 12, relocs)
+    store32(lm + 20, 0)
+    return lm as LabelMap
+end
+
+procedure labelmap_define(lm: mut LabelMap, id: uint32, off: uint32) begin
+    var offsets := load64(lm as uint64 + 0)
+    store32(offsets + (id as uint64) * 4, off as int32)
+end
+
+function labelmap_resolve(lm: ref LabelMap, id: uint32): uint32 begin
+    var offsets := load64(lm as uint64 + 0)
+    return load32(offsets + (id as uint64) * 4) as uint32
+end
+
+procedure labelmap_add_reloc(lm: mut LabelMap, site_off: uint32, label_id: uint32) begin
+    var r := lm as uint64
+    var relocs    := load64(r + 12)
+    var reloc_cnt := load32(r + 20) as uint32
+    var slot := relocs + (reloc_cnt as uint64) * 8
+    store32(slot,     site_off as int32)
+    store32(slot + 4, label_id as int32)
+    store32(r + 20, (reloc_cnt + 1) as int32)
+end
+
+procedure labelmap_resolve_relocs(lm: ref LabelMap, buf: ref AsmBuf) begin
+    var r         := lm as uint64
+    var relocs    := load64(r + 12)
+    var reloc_cnt := load32(r + 20) as uint32
+    var i: uint32 := 0
+    while i < reloc_cnt do
+        var slot     := relocs + (i as uint64) * 8
+        var site_off := load32(slot)     as uint32
+        var label_id := load32(slot + 4) as uint32
+        var target   := labelmap_resolve(lm, label_id)
+        if target != UNDEF_LABEL then
+            patch_rel32(buf, site_off, target)
+        end
+        i := i + 1
+    end
+end
+
+/* ── Extern call site table ──────────────────────────────────────────────────── */
+/* Records (imm_off: uint32, name_ptr: uint64, name_len: uint32) triples. */
+
+type ExternSites = struct {
+    ptr:   uint64,
+    count: uint32,
+}
+
+const EXTERN_ENTRY: uint32 = 16  /* imm_off(4), _pad(4), name_ptr(8) — + name_len in next slot */
+
+/* ExternSites/StringRefs field offsets: ptr@0(uint64), count@8(uint32) */
+
+function extern_sites_new(): ExternSites begin
+    var data := maia_mmap(4096)
+    var es := maia_mmap(12)
+    store64(es + 0, data)
+    store32(es + 8, 0)
+    return es as ExternSites
+end
+
+procedure extern_sites_add(es: mut ExternSites, imm_off: uint32, name_ptr: uint64, name_len: uint32) begin
+    var r     := es as uint64
+    var ptr   := load64(r + 0)
+    var count := load32(r + 8) as uint32
+    var slot := ptr + (count as uint64) * 24
+    store32(slot,      imm_off as int32)
+    store32(slot + 4,  name_len as int32)
+    store64(slot + 8,  name_ptr)
+    store32(r + 8, (count + 1) as int32)
+end
+
+/* ── String ref table ────────────────────────────────────────────────────────── */
+
+type StringRefs = struct {
+    ptr:   uint64,
+    count: uint32,
+}
+
+const STR_REF_BYTES: uint32 = 8  /* imm_off(4), string_idx(4) */
+
+function string_refs_new(): StringRefs begin
+    var data := maia_mmap(4096)
+    var sr := maia_mmap(12)
+    store64(sr + 0, data)
+    store32(sr + 8, 0)
+    return sr as StringRefs
+end
+
+procedure string_refs_add(sr: mut StringRefs, imm_off: uint32, string_idx: uint32) begin
+    var r     := sr as uint64
+    var ptr   := load64(r + 0)
+    var count := load32(r + 8) as uint32
+    var slot := ptr + (count as uint64) * STR_REF_BYTES as uint64
+    store32(slot,     imm_off as int32)
+    store32(slot + 4, string_idx as int32)
+    store32(r + 8, (count + 1) as int32)
+end

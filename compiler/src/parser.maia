@@ -1,0 +1,1760 @@
+/// Maia self-hosted compiler — recursive-descent parser.
+/// Converts a token stream into AST nodes allocated in an AstArena.
+
+module Parser
+
+use Lexer
+use AST
+
+extern function maia_mmap(len: uint64): uint64
+extern function store32(addr: uint64, v: int32)
+extern function store64(addr: uint64, v: uint64)
+extern function load32(addr: uint64): int32
+extern function load64(addr: uint64): uint64
+extern function maia_exit(code: int32)
+
+/* ── Parser state ────────────────────────────────────────────────────────────── */
+
+type Parser = struct {
+    tokens:      uint64,  /* pointer to Token array (each token = 20 bytes) */
+    tok_count:   uint32,
+    pos:         uint32,
+    src:         uint64,
+    src_len:     uint32,
+    arena:       AstArena,
+    /* Diagnostic list: pairs of (line, col, message_ptr, message_len) */
+    diag_ptr:    uint64,
+    diag_count:  uint32,
+}
+
+const TOKEN_STRIDE: uint32 = 20  /* 5 × int32 fields */
+
+/* ── Token accessors ─────────────────────────────────────────────────────────── */
+
+function parser_tok_kind(p: ref Parser, idx: uint32): int32 begin
+    var base := p.tokens + (idx as uint64) * TOKEN_STRIDE as uint64
+    return load32(base)
+end
+
+function parser_tok_start(p: ref Parser, idx: uint32): uint32 begin
+    var base := p.tokens + (idx as uint64) * TOKEN_STRIDE as uint64
+    return load32(base + 4) as uint32
+end
+
+function parser_tok_end(p: ref Parser, idx: uint32): uint32 begin
+    var base := p.tokens + (idx as uint64) * TOKEN_STRIDE as uint64
+    return load32(base + 8) as uint32
+end
+
+function parser_tok_line(p: ref Parser, idx: uint32): uint32 begin
+    var base := p.tokens + (idx as uint64) * TOKEN_STRIDE as uint64
+    return load32(base + 12) as uint32
+end
+
+function parser_tok_col(p: ref Parser, idx: uint32): uint32 begin
+    var base := p.tokens + (idx as uint64) * TOKEN_STRIDE as uint64
+    return load32(base + 16) as uint32
+end
+
+function parser_new(tokens: uint64, tok_count: uint32, src: uint64, src_len: uint32): Parser begin
+    var arena := ast_arena_new(4096 * 1024)  /* 4 MB arena */
+    return Parser {
+        .tokens     = tokens,
+        .tok_count  = tok_count,
+        .pos        = 0,
+        .src        = src,
+        .src_len    = src_len,
+        .arena      = arena,
+        .diag_ptr   = maia_mmap(65536),
+        .diag_count = 0,
+    }
+end
+
+/* ── Cursor helpers ──────────────────────────────────────────────────────────── */
+
+function parser_check(p: ref Parser, kind: int32): bool begin
+    if p.pos >= p.tok_count then return false end
+    return parser_tok_kind(p, p.pos) == kind
+end
+
+function parser_peek(p: ref Parser): int32 begin
+    if p.pos >= p.tok_count then return TK_EOF end
+    return parser_tok_kind(p, p.pos)
+end
+
+function parser_peek2(p: ref Parser): int32 begin
+    if p.pos + 1 >= p.tok_count then return TK_EOF end
+    return parser_tok_kind(p, p.pos + 1)
+end
+
+procedure parser_advance(p: mut Parser) begin
+    if p.pos < p.tok_count then p.pos := p.pos + 1 end
+end
+
+function parser_current_span(p: ref Parser): Span begin
+    if p.pos >= p.tok_count then
+        return Span { .start = 0, .end_ = 0, .line = 0, .col = 0 }
+    end
+    return Span {
+        .start = parser_tok_start(p, p.pos),
+        .end_  = parser_tok_end(p, p.pos),
+        .line  = parser_tok_line(p, p.pos),
+        .col   = parser_tok_col(p, p.pos),
+    }
+end
+
+function parser_expect(p: mut Parser, kind: int32): Span begin
+    var span := parser_current_span(p)
+    if not parser_check(p, kind) then
+        parser_error(p, "unexpected token", span)
+        return span
+    end
+    parser_advance(p)
+    return span
+end
+
+procedure parser_try_consume(p: mut Parser, kind: int32) begin
+    if parser_check(p, kind) then parser_advance(p) end
+end
+
+procedure parser_error(p: mut Parser, msg: string, span: Span) begin
+    /* Record diagnostic (simplified: just count errors) */
+    p.diag_count := p.diag_count + 1
+end
+
+function parser_at_end(p: ref Parser): bool begin
+    return p.pos >= p.tok_count or parser_tok_kind(p, p.pos) == TK_EOF
+end
+
+/* Panic-mode recovery: skip to the next declaration boundary */
+procedure parser_synchronize(p: mut Parser) begin
+    while not parser_at_end(p) do
+        var k := parser_peek(p)
+        if k == TK_FUNCTION or k == TK_PROCEDURE or k == TK_TYPE or
+           k == TK_CONST or k == TK_VAR or k == TK_MODULE or k == TK_USE or
+           k == TK_EXTERN or k == TK_ACTOR then
+            break
+        end
+        parser_advance(p)
+    end
+end
+
+/* ── Top-level parser ────────────────────────────────────────────────────────── */
+
+function parse_module(p: mut Parser): Module begin
+    /* Optional module declaration */
+    var mod_name: uint64 := 0
+    var mod_name_len: uint32 := 0
+
+    if parser_check(p, TK_MODULE) then
+        parser_advance(p)
+        if parser_check(p, TK_IDENT) then
+            mod_name     := p.src + parser_tok_start(p, p.pos) as uint64
+            mod_name_len := parser_tok_end(p, p.pos) - parser_tok_start(p, p.pos)
+            parser_advance(p)
+        end
+        parser_try_consume(p, TK_SEMICOLON)
+    end
+
+    /* Collect top-level declarations into a growable pointer array */
+    const DECL_CAP: uint32 = 1024
+    var decl_arr := maia_mmap((DECL_CAP as uint64) * 8)
+    var decl_count: uint32 := 0
+
+    while not parser_at_end(p) do
+        var d := parse_decl(p)
+        if d != 0 then
+            store64(decl_arr + (decl_count as uint64) * 8, d)
+            decl_count := decl_count + 1
+        else
+            parser_synchronize(p)
+        end
+    end
+
+    return Module {
+        .name       = mod_name,
+        .name_len   = mod_name_len,
+        .decls      = decl_arr,
+        .decl_count = decl_count,
+        .src        = p.src,
+        .src_len    = p.src_len,
+    }
+end
+
+/* ── Declaration parsing ─────────────────────────────────────────────────────── */
+
+function parse_decl(p: mut Parser): uint64 begin
+    /* Export level */
+    var export_level: int32 := 0
+    if parser_check(p, TK_EXPORT) then
+        parser_advance(p)
+        if parser_check(p, TK_LPAREN) then
+            parser_advance(p)
+            parser_advance(p)  /* qualifier ident */
+            parser_try_consume(p, TK_RPAREN)
+        end
+        export_level := 1
+    end
+
+    /* Async/inline modifiers */
+    var is_async: bool := false
+    var is_inline: bool := false
+    if parser_check(p, TK_ASYNC) then
+        is_async := true
+        parser_advance(p)
+    end
+    if parser_check(p, TK_INLINE) then
+        is_inline := true
+        parser_advance(p)
+    end
+    if parser_check(p, TK_ASYNC) and not is_async then
+        is_async := true
+        parser_advance(p)
+    end
+
+    var k := parser_peek(p)
+    var span := parser_current_span(p)
+
+    if k == TK_MODULE then return parse_module_decl(p, span) end
+    if k == TK_USE then return parse_use_decl(p, span) end
+    if k == TK_FUNCTION then return parse_func_decl(p, span, export_level, is_async, false) end
+    if k == TK_PROCEDURE then return parse_proc_decl(p, span, export_level, is_async) end
+    if k == TK_TYPE then return parse_type_decl(p, span, export_level) end
+    if k == TK_CONST then return parse_const_decl(p, span, export_level) end
+    if k == TK_VAR then return parse_var_decl_top(p, span, export_level) end
+    if k == TK_ACTOR then return parse_actor_decl(p, span, export_level) end
+    if k == TK_EXTERN then return parse_extern_decl(p, span) end
+
+    /* Unrecognized — return 0 to trigger recovery */
+    return 0
+end
+
+function parse_module_decl(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* consume 'module' */
+    var name_start: uint32 := 0
+    var name_len: uint32 := 0
+    if parser_check(p, TK_IDENT) then
+        name_start := parser_tok_start(p, p.pos)
+        name_len   := parser_tok_end(p, p.pos) - name_start
+        parser_advance(p)
+    end
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+    node_set_kind(node, DECL_MODULE)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES, name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4, name_len as int32)
+    return node
+end
+
+function parse_use_decl(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'use' */
+    /* Parse path: Ident (.Ident)* [.{items} | as alias | .*] */
+    const PATH_CAP: uint32 = 16
+    var path_arr := maia_mmap((PATH_CAP as uint64) * 8)
+    var path_count: uint32 := 0
+
+    while parser_check(p, TK_IDENT) do
+        var seg := p.src + parser_tok_start(p, p.pos) as uint64
+        store64(path_arr + (path_count as uint64) * 8, seg)
+        path_count := path_count + 1
+        parser_advance(p)
+        if parser_check(p, TK_DOT) and parser_peek2(p) != TK_LBRACE then
+            parser_advance(p)
+        else
+            break
+        end
+    end
+
+    var items: uint64 := 0
+    var item_count: uint32 := 0
+    var alias: uint64 := 0
+
+    if parser_check(p, TK_DOT) then
+        parser_advance(p)
+        if parser_check(p, TK_LBRACE) then
+            parser_advance(p)
+            items := maia_mmap((PATH_CAP as uint64) * 8)
+            while not parser_check(p, TK_RBRACE) and not parser_at_end(p) do
+                if parser_check(p, TK_IDENT) then
+                    store64(items + (item_count as uint64) * 8,
+                            p.src + parser_tok_start(p, p.pos) as uint64)
+                    item_count := item_count + 1
+                    parser_advance(p)
+                end
+                if parser_check(p, TK_COMMA) then parser_advance(p) end
+            end
+            parser_try_consume(p, TK_RBRACE)
+        elsif parser_check(p, TK_STAR) then
+            parser_advance(p)
+        end
+    elsif parser_check(p, TK_AS) then
+        parser_advance(p)
+        if parser_check(p, TK_IDENT) then
+            alias := p.src + parser_tok_start(p, p.pos) as uint64
+            parser_advance(p)
+        end
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 40)
+    node_set_kind(node, DECL_USE)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,      path_arr)
+    store32(node + NODE_HDR_BYTES + 8,  path_count as int32)
+    store64(node + NODE_HDR_BYTES + 16, items)
+    store32(node + NODE_HDR_BYTES + 24, item_count as int32)
+    store64(node + NODE_HDR_BYTES + 32, alias)
+    return node
+end
+
+/* ── Function / procedure declarations ──────────────────────────────────────── */
+
+function parse_func_decl(p: mut Parser, span: Span, export_level: int32, is_async: bool, is_comptime: bool): uint64 begin
+    parser_advance(p)  /* 'function' */
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+
+    /* Generic type parameters [T, U] */
+    if parser_check(p, TK_LBRACKET) then
+        parser_advance(p)
+        while not parser_check(p, TK_RBRACKET) and not parser_at_end(p) do
+            parser_advance(p)
+            if parser_check(p, TK_COMMA) then parser_advance(p) end
+        end
+        parser_try_consume(p, TK_RBRACKET)
+    end
+
+    var params := parse_param_list(p)
+    var param_count: uint32 := load32(params) as uint32
+
+    var ret_ty: uint64 := 0
+    if parser_check(p, TK_COLON) then
+        parser_advance(p)
+        ret_ty := parse_type_expr(p)
+    end
+
+    var body: uint64 := 0
+    if parser_check(p, TK_BEGIN) then
+        body := parse_block_stmt(p)
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 64)
+    node_set_kind(node, DECL_FUNC)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  params)
+    store32(node + NODE_HDR_BYTES + 16, param_count as int32)
+    store64(node + NODE_HDR_BYTES + 24, ret_ty)
+    store64(node + NODE_HDR_BYTES + 32, body)
+    store32(node + NODE_HDR_BYTES + 40, if is_async then 1 else 0 end)
+    store32(node + NODE_HDR_BYTES + 44, export_level)
+    return node
+end
+
+function parse_proc_decl(p: mut Parser, span: Span, export_level: int32, is_async: bool): uint64 begin
+    parser_advance(p)  /* 'procedure' */
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+
+    var params := parse_param_list(p)
+    var param_count: uint32 := load32(params) as uint32
+
+    var body: uint64 := 0
+    if parser_check(p, TK_BEGIN) then
+        body := parse_block_stmt(p)
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 56)
+    node_set_kind(node, DECL_PROC)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  params)
+    store32(node + NODE_HDR_BYTES + 16, param_count as int32)
+    store64(node + NODE_HDR_BYTES + 24, body)
+    store32(node + NODE_HDR_BYTES + 32, if is_async then 1 else 0 end)
+    store32(node + NODE_HDR_BYTES + 36, export_level)
+    return node
+end
+
+/* Parse (param, param, …) and return a pointer to [count: int32, param*[]] */
+function parse_param_list(p: mut Parser): uint64 begin
+    var params := maia_mmap(256)  /* room for 256 params at 8 bytes each */
+    var count: uint32 := 0
+    parser_expect(p, TK_LPAREN)
+
+    while not parser_check(p, TK_RPAREN) and not parser_at_end(p) do
+        var param := parse_param(p)
+        if param != 0 then
+            store64(params + 8 + (count as uint64) * 8, param)
+            count := count + 1
+        end
+        if parser_check(p, TK_COMMA) then parser_advance(p) end
+    end
+
+    parser_try_consume(p, TK_RPAREN)
+    store32(params, count as int32)
+    return params
+end
+
+function parse_param(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    /* ownership qualifier (opt) */
+    var ownership: int32 := OWN_NONE
+    if parser_check(p, TK_OWN)  then ownership := OWN_OWN;  parser_advance(p) end
+    if parser_check(p, TK_REF)  then ownership := OWN_REF;  parser_advance(p) end
+    if parser_check(p, TK_MUT)  then ownership := OWN_MUT;  parser_advance(p) end
+    if parser_check(p, TK_RC)   then ownership := OWN_RC;   parser_advance(p) end
+    if parser_check(p, TK_WEAK) then ownership := OWN_WEAK; parser_advance(p) end
+    if parser_check(p, TK_ISO)  then ownership := OWN_ISO;  parser_advance(p) end
+    if parser_check(p, TK_TRN)  then ownership := OWN_TRN;  parser_advance(p) end
+    if parser_check(p, TK_VAL)  then ownership := OWN_VAL;  parser_advance(p) end
+    if parser_check(p, TK_BOX)  then ownership := OWN_BOX;  parser_advance(p) end
+    if parser_check(p, TK_TAG)  then ownership := OWN_TAG;  parser_advance(p) end
+
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+
+    var ty: uint64 := 0
+    if parser_check(p, TK_COLON) then
+        parser_advance(p)
+        ty := parse_type_expr(p)
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 32)
+    node_set_kind(node, 0)  /* PARAM kind not in decl enum; use 0 */
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  ty)
+    store32(node + NODE_HDR_BYTES + 16, ownership)
+    return node
+end
+
+/* ── Type declarations ───────────────────────────────────────────────────────── */
+
+function parse_type_decl(p: mut Parser, span: Span, export_level: int32): uint64 begin
+    parser_advance(p)  /* 'type' */
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+
+    /* Generic params */
+    if parser_check(p, TK_LBRACKET) then
+        parser_advance(p)
+        while not parser_check(p, TK_RBRACKET) and not parser_at_end(p) do
+            parser_advance(p)
+            if parser_check(p, TK_COMMA) then parser_advance(p) end
+        end
+        parser_try_consume(p, TK_RBRACKET)
+    end
+
+    parser_expect(p, TK_EQ)
+
+    var def: uint64 := 0
+    var def_kind: int32 := 0
+
+    if parser_check(p, TK_STRUCT) then
+        parser_advance(p)
+        def := parse_struct_def(p)
+        def_kind := 0
+    elsif parser_check(p, TK_ENUM) then
+        parser_advance(p)
+        def := parse_enum_def(p)
+        def_kind := 1
+    else
+        def := parse_type_expr(p)
+        def_kind := 2
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 32)
+    node_set_kind(node, DECL_TYPE)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  def)
+    store32(node + NODE_HDR_BYTES + 16, def_kind)
+    store32(node + NODE_HDR_BYTES + 20, export_level)
+    return node
+end
+
+function parse_struct_def(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    parser_expect(p, TK_LBRACE)
+
+    var fields := maia_mmap(512)
+    var field_count: uint32 := 0
+    var methods := maia_mmap(512)
+    var method_count: uint32 := 0
+
+    while not parser_check(p, TK_RBRACE) and not parser_at_end(p) do
+        var k := parser_peek(p)
+        if k == TK_FUNCTION or k == TK_PROCEDURE then
+            var ms := parser_current_span(p)
+            var is_async: bool := false
+            var method := parse_func_decl(p, ms, 0, is_async, false)
+            if k == TK_PROCEDURE then
+                method := parse_proc_decl(p, ms, 0, is_async)
+            end
+            store64(methods + (method_count as uint64) * 8, method)
+            method_count := method_count + 1
+        else
+            var field := parse_struct_field(p)
+            if field != 0 then
+                store64(fields + (field_count as uint64) * 8, field)
+                field_count := field_count + 1
+                parser_try_consume(p, TK_COMMA)
+            end
+        end
+    end
+    parser_try_consume(p, TK_RBRACE)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 32)
+    node_set_kind(node, 0)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,      fields)
+    store32(node + NODE_HDR_BYTES + 8,  field_count as int32)
+    store64(node + NODE_HDR_BYTES + 16, methods)
+    store32(node + NODE_HDR_BYTES + 24, method_count as int32)
+    return node
+end
+
+function parse_struct_field(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    var ownership: int32 := OWN_NONE
+    if parser_check(p, TK_MUT)  then ownership := OWN_MUT;  parser_advance(p) end
+    if parser_check(p, TK_OWN)  then ownership := OWN_OWN;  parser_advance(p) end
+    if parser_check(p, TK_REF)  then ownership := OWN_REF;  parser_advance(p) end
+
+    if not parser_check(p, TK_IDENT) then return 0 end
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+    parser_expect(p, TK_COLON)
+    var ty := parse_type_expr(p)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+    node_set_kind(node, 0)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  ty)
+    store32(node + NODE_HDR_BYTES + 16, ownership)
+    return node
+end
+
+function parse_enum_def(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    parser_expect(p, TK_LBRACE)
+
+    var variants := maia_mmap(512)
+    var variant_count: uint32 := 0
+
+    while not parser_check(p, TK_RBRACE) and not parser_at_end(p) do
+        if parser_check(p, TK_IDENT) then
+            var vs := parser_current_span(p)
+            var vname_start := parser_tok_start(p, p.pos)
+            var vname_len   := parser_tok_end(p, p.pos) - vname_start
+            parser_advance(p)
+            var value: int64 := 0 as int64
+            var has_value: bool := false
+            if parser_check(p, TK_EQ) then
+                parser_advance(p)
+                var val_node := parse_expr(p)
+                has_value := true
+    val_node
+            end
+            var vnode := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+            node_set_kind(vnode, 0)
+            node_set_span(vnode, vs)
+            store32(vnode + NODE_HDR_BYTES,     vname_start as int32)
+            store32(vnode + NODE_HDR_BYTES + 4,  vname_len as int32)
+            store64(variants + (variant_count as uint64) * 8, vnode)
+            variant_count := variant_count + 1
+            parser_try_consume(p, TK_COMMA)
+        else
+            parser_advance(p)
+        end
+    end
+    parser_try_consume(p, TK_RBRACE)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+    node_set_kind(node, 1)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,     variants)
+    store32(node + NODE_HDR_BYTES + 8, variant_count as int32)
+    return node
+end
+
+/* ── const / var declarations ────────────────────────────────────────────────── */
+
+function parse_const_decl(p: mut Parser, span: Span, export_level: int32): uint64 begin
+    parser_advance(p)  /* 'const' */
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+    var ty: uint64 := 0
+    if parser_check(p, TK_COLON) then
+        parser_advance(p)
+        ty := parse_type_expr(p)
+    end
+    parser_expect(p, TK_EQ)
+    var value := parse_expr(p)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 40)
+    node_set_kind(node, DECL_CONST)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  ty)
+    store64(node + NODE_HDR_BYTES + 16, value)
+    store32(node + NODE_HDR_BYTES + 24, export_level)
+    return node
+end
+
+function parse_var_decl_top(p: mut Parser, span: Span, export_level: int32): uint64 begin
+    parser_advance(p)  /* 'var' */
+    var ownership: int32 := OWN_NONE
+    if parser_check(p, TK_MUT)  then ownership := OWN_MUT;  parser_advance(p) end
+    if parser_check(p, TK_OWN)  then ownership := OWN_OWN;  parser_advance(p) end
+
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+    var ty: uint64 := 0
+    if parser_check(p, TK_COLON) then
+        parser_advance(p)
+        ty := parse_type_expr(p)
+    end
+    var init: uint64 := 0
+    if parser_check(p, TK_EQ) or parser_check(p, TK_COLON_EQ) then
+        parser_advance(p)
+        init := parse_expr(p)
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 48)
+    node_set_kind(node, DECL_VAR)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  ty)
+    store64(node + NODE_HDR_BYTES + 16, init)
+    store32(node + NODE_HDR_BYTES + 24, ownership)
+    store32(node + NODE_HDR_BYTES + 28, export_level)
+    return node
+end
+
+/* ── Actor / extern declarations ─────────────────────────────────────────────── */
+
+function parse_actor_decl(p: mut Parser, span: Span, export_level: int32): uint64 begin
+    parser_advance(p)  /* 'actor' */
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+
+    /* Skip body between { } */
+    if parser_check(p, TK_LBRACE) then
+        var depth: int32 := 1
+        parser_advance(p)
+        while depth > 0 and not parser_at_end(p) do
+            var k := parser_peek(p)
+            if k == TK_LBRACE then depth := depth + 1 end
+            if k == TK_RBRACE then depth := depth - 1 end
+            parser_advance(p)
+        end
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+    node_set_kind(node, DECL_ACTOR)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,     name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4, name_len as int32)
+    return node
+end
+
+function parse_extern_decl(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'extern' */
+    var inner: uint64 := 0
+    var k := parser_peek(p)
+    if k == TK_FUNCTION then
+        inner := parse_func_decl(p, parser_current_span(p), 0, false, false)
+    elsif k == TK_PROCEDURE then
+        inner := parse_proc_decl(p, parser_current_span(p), 0, false)
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+    node_set_kind(node, DECL_EXTERN)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES, inner)
+    return node
+end
+
+/* ── Type expression parser ──────────────────────────────────────────────────── */
+
+function parse_type_expr(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    var k := parser_peek(p)
+
+    /* Ownership qualifier */
+    var ownership: int32 := OWN_NONE
+    if k == TK_OWN  then ownership := OWN_OWN;  parser_advance(p) end
+    if k == TK_REF  then ownership := OWN_REF;  parser_advance(p) end
+    if k == TK_MUT  then ownership := OWN_MUT;  parser_advance(p) end
+    if k == TK_RC   then ownership := OWN_RC;   parser_advance(p) end
+    if k == TK_WEAK then ownership := OWN_WEAK; parser_advance(p) end
+    if k == TK_ISO  then ownership := OWN_ISO;  parser_advance(p) end
+    if k == TK_TRN  then ownership := OWN_TRN;  parser_advance(p) end
+    if k == TK_VAL  then ownership := OWN_VAL;  parser_advance(p) end
+    if k == TK_BOX  then ownership := OWN_BOX;  parser_advance(p) end
+    if k == TK_TAG  then ownership := OWN_TAG;  parser_advance(p) end
+    if ownership != OWN_NONE then k := parser_peek(p) end
+
+    /* Optional type: ?T */
+    if k == TK_QUESTION then
+        parser_advance(p)
+        var inner := parse_type_expr(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, TYPE_OPTIONAL)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES, inner)
+        return node
+    end
+
+    /* Pointer type: *T */
+    if k == TK_STAR then
+        parser_advance(p)
+        var mutable: int32 := if parser_check(p, TK_MUT) then 1 else 0 end
+        if mutable == 1 then parser_advance(p) end
+        var inner := parse_type_expr(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, TYPE_POINTER)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES, inner)
+        store32(node + NODE_HDR_BYTES + 8, mutable)
+        return node
+    end
+
+    /* Array/slice: [N]T or []T */
+    if k == TK_LBRACKET then
+        parser_advance(p)
+        var size_expr: uint64 := 0
+        if not parser_check(p, TK_RBRACKET) then
+            size_expr := parse_expr(p)
+        end
+        parser_expect(p, TK_RBRACKET)
+        var elem := parse_type_expr(p)
+        var ty_kind := if size_expr != 0 then TYPE_ARRAY else TYPE_SLICE end
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, ty_kind)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,     elem)
+        store64(node + NODE_HDR_BYTES + 8, size_expr)
+        return node
+    end
+
+    /* Function type: function(A, B): R */
+    if k == TK_FUNCTION then
+        parser_advance(p)
+        /* parse parameter types */
+        var param_tys := maia_mmap(128)
+        var pt_count: uint32 := 0
+        if parser_check(p, TK_LPAREN) then
+            parser_advance(p)
+            while not parser_check(p, TK_RPAREN) and not parser_at_end(p) do
+                var pt := parse_type_expr(p)
+                store64(param_tys + (pt_count as uint64) * 8, pt)
+                pt_count := pt_count + 1
+                if parser_check(p, TK_COMMA) then parser_advance(p) end
+            end
+            parser_try_consume(p, TK_RPAREN)
+        end
+        var ret_ty: uint64 := 0
+        if parser_check(p, TK_COLON) then
+            parser_advance(p)
+            ret_ty := parse_type_expr(p)
+        end
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+        node_set_kind(node, TYPE_FUNC)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,      param_tys)
+        store32(node + NODE_HDR_BYTES + 8,  pt_count as int32)
+        store64(node + NODE_HDR_BYTES + 16, ret_ty)
+        return node
+    end
+
+    /* Named type (possibly generic): Ident or Ident(T, U) */
+    if k == TK_IDENT then
+        var name_start := parser_tok_start(p, p.pos)
+        var name_len   := parser_tok_end(p, p.pos) - name_start
+        parser_advance(p)
+
+        /* Generic application: Foo(T, U) */
+        if parser_check(p, TK_LPAREN) then
+            parser_advance(p)
+            var args := maia_mmap(128)
+            var arg_count: uint32 := 0
+            while not parser_check(p, TK_RPAREN) and not parser_at_end(p) do
+                var a := parse_type_expr(p)
+                store64(args + (arg_count as uint64) * 8, a)
+                arg_count := arg_count + 1
+                if parser_check(p, TK_COMMA) then parser_advance(p) end
+            end
+            parser_try_consume(p, TK_RPAREN)
+            var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+            node_set_kind(node, TYPE_GENERIC)
+            node_set_span(node, span)
+            store32(node + NODE_HDR_BYTES,      name_start as int32)
+            store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+            store64(node + NODE_HDR_BYTES + 8,  args)
+            store32(node + NODE_HDR_BYTES + 16, arg_count as int32)
+            return node
+        end
+
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, TYPE_NAMED)
+        node_set_span(node, span)
+        store32(node + NODE_HDR_BYTES,     name_start as int32)
+        store32(node + NODE_HDR_BYTES + 4, name_len as int32)
+        if ownership != OWN_NONE then
+            var onode := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+            node_set_kind(onode, TYPE_OWNED)
+            node_set_span(onode, span)
+            store32(onode + NODE_HDR_BYTES,     ownership)
+            store64(onode + NODE_HDR_BYTES + 8, node)
+            return onode
+        end
+        return node
+    end
+
+    /* Unit type () */
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES)
+    node_set_kind(node, TYPE_UNIT)
+    node_set_span(node, span)
+    return node
+end
+
+/* ── Statement parser ────────────────────────────────────────────────────────── */
+
+function parse_stmt(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    var k := parser_peek(p)
+
+    if k == TK_BEGIN   then return parse_block_stmt(p) end
+    if k == TK_VAR     then return parse_var_stmt(p, span) end
+    if k == TK_CONST   then return parse_const_stmt(p, span) end
+    if k == TK_IF      then return parse_if_stmt(p, span) end
+    if k == TK_WHILE   then return parse_while_stmt(p, span) end
+    if k == TK_FOR     then return parse_for_stmt(p, span) end
+    if k == TK_LOOP    then return parse_loop_stmt(p, span) end
+    if k == TK_RETURN  then return parse_return_stmt(p, span) end
+    if k == TK_BREAK   then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES)
+        node_set_kind(node, STMT_BREAK)
+        node_set_span(node, span)
+        return node
+    end
+    if k == TK_CONTINUE then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES)
+        node_set_kind(node, STMT_CONTINUE)
+        node_set_span(node, span)
+        return node
+    end
+    if k == TK_MATCH  then return parse_match_stmt(p, span) end
+    if k == TK_DEFER  then return parse_defer_stmt(p, span) end
+    if k == TK_UNSAFE then return parse_unsafe_stmt(p, span) end
+    if k == TK_SAFE   then return parse_safe_stmt(p, span) end
+
+    /* Expression statement or assignment */
+    var expr := parse_expr(p)
+    /* Check for assignment operators */
+    var ak := parser_peek(p)
+    if ak == TK_COLON_EQ or ak == TK_PLUS_EQ or ak == TK_MINUS_EQ or
+       ak == TK_STAR_EQ  or ak == TK_SLASH_EQ or ak == TK_PERCENT_EQ or
+       ak == TK_AMP_EQ   or ak == TK_PIPE_EQ  or ak == TK_CARET_EQ or
+       ak == TK_LT_LT_EQ or ak == TK_GT_GT_EQ then
+        var op := assign_op_from_tk(ak)
+        parser_advance(p)
+        var rhs := parse_expr(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+        node_set_kind(node, STMT_ASSIGN)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,      expr)
+        store64(node + NODE_HDR_BYTES + 8,  rhs)
+        store32(node + NODE_HDR_BYTES + 16, op)
+        return node
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+    node_set_kind(node, STMT_EXPR)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES, expr)
+    return node
+end
+
+function assign_op_from_tk(k: int32): int32 begin
+    if k == TK_COLON_EQ  then return BINOP_ASSIGN end
+    if k == TK_PLUS_EQ   then return BINOP_ADD_ASSIGN end
+    if k == TK_MINUS_EQ  then return BINOP_SUB_ASSIGN end
+    if k == TK_STAR_EQ   then return BINOP_MUL_ASSIGN end
+    if k == TK_SLASH_EQ  then return BINOP_DIV_ASSIGN end
+    if k == TK_PERCENT_EQ then return BINOP_MOD_ASSIGN end
+    if k == TK_AMP_EQ    then return BINOP_AND_ASSIGN end
+    if k == TK_PIPE_EQ   then return BINOP_OR_ASSIGN end
+    if k == TK_CARET_EQ  then return BINOP_XOR_ASSIGN end
+    if k == TK_LT_LT_EQ  then return BINOP_SHL_ASSIGN end
+    if k == TK_GT_GT_EQ  then return BINOP_SHR_ASSIGN end
+    return BINOP_ASSIGN
+end
+
+function parse_block_stmt(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    parser_expect(p, TK_BEGIN)
+
+    var stmts := maia_mmap(4096)
+    var count: uint32 := 0
+
+    while not parser_check(p, TK_END) and not parser_at_end(p) do
+        var s := parse_stmt(p)
+        if s != 0 then
+            store64(stmts + (count as uint64) * 8, s)
+            count := count + 1
+        end
+    end
+    parser_expect(p, TK_END)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+    node_set_kind(node, STMT_BLOCK)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,     stmts)
+    store32(node + NODE_HDR_BYTES + 8, count as int32)
+    return node
+end
+
+function parse_var_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'var' */
+    var ownership: int32 := OWN_NONE
+    if parser_check(p, TK_MUT)  then ownership := OWN_MUT;  parser_advance(p) end
+    if parser_check(p, TK_OWN)  then ownership := OWN_OWN;  parser_advance(p) end
+
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+    var ty: uint64 := 0
+    if parser_check(p, TK_COLON) then
+        parser_advance(p)
+        ty := parse_type_expr(p)
+    end
+    var init: uint64 := 0
+    if parser_check(p, TK_COLON_EQ) or parser_check(p, TK_EQ) then
+        parser_advance(p)
+        init := parse_expr(p)
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 40)
+    node_set_kind(node, STMT_VAR_DECL)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  ty)
+    store64(node + NODE_HDR_BYTES + 16, init)
+    store32(node + NODE_HDR_BYTES + 24, ownership)
+    return node
+end
+
+function parse_const_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)
+    var name_start := parser_tok_start(p, p.pos)
+    var name_len   := parser_tok_end(p, p.pos) - name_start
+    parser_advance(p)
+    var ty: uint64 := 0
+    if parser_check(p, TK_COLON) then
+        parser_advance(p)
+        ty := parse_type_expr(p)
+    end
+    parser_expect(p, TK_EQ)
+    var value := parse_expr(p)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 32)
+    node_set_kind(node, STMT_CONST_DECL)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      name_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+    store64(node + NODE_HDR_BYTES + 8,  ty)
+    store64(node + NODE_HDR_BYTES + 16, value)
+    return node
+end
+
+function parse_if_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'if' */
+    var cond := parse_expr(p)
+    parser_expect(p, TK_THEN)
+    /* then-branch: statements until elsif/else/end */
+    var then_stmts := maia_mmap(4096)
+    var then_count: uint32 := 0
+    while not parser_check(p, TK_ELSIF) and not parser_check(p, TK_ELSE) and
+          not parser_check(p, TK_END) and not parser_at_end(p) do
+        var s := parse_stmt(p)
+        if s != 0 then
+            store64(then_stmts + (then_count as uint64) * 8, s)
+            then_count := then_count + 1
+        end
+    end
+    /* Package then-branch as a block */
+    var then_block := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+    node_set_kind(then_block, STMT_BLOCK)
+    node_set_span(then_block, span)
+    store64(then_block + NODE_HDR_BYTES,     then_stmts)
+    store32(then_block + NODE_HDR_BYTES + 8, then_count as int32)
+
+    /* elsif branches */
+    var elsif_arr := maia_mmap(512)
+    var elsif_count: uint32 := 0
+    while parser_check(p, TK_ELSIF) do
+        parser_advance(p)
+        var ec := parse_expr(p)
+        parser_expect(p, TK_THEN)
+        var es_stmts := maia_mmap(4096)
+        var es_count: uint32 := 0
+        while not parser_check(p, TK_ELSIF) and not parser_check(p, TK_ELSE) and
+              not parser_check(p, TK_END) and not parser_at_end(p) do
+            var s := parse_stmt(p)
+            if s != 0 then
+                store64(es_stmts + (es_count as uint64) * 8, s)
+                es_count := es_count + 1
+            end
+        end
+        var es_block := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(es_block, STMT_BLOCK)
+        node_set_span(es_block, span)
+        store64(es_block + NODE_HDR_BYTES,     es_stmts)
+        store32(es_block + NODE_HDR_BYTES + 8, es_count as int32)
+        /* Store (cond_ptr, block_ptr) pair */
+        store64(elsif_arr + (elsif_count as uint64) * 16,     ec)
+        store64(elsif_arr + (elsif_count as uint64) * 16 + 8, es_block)
+        elsif_count := elsif_count + 1
+    end
+
+    var else_block: uint64 := 0
+    if parser_check(p, TK_ELSE) then
+        parser_advance(p)
+        var el_stmts := maia_mmap(4096)
+        var el_count: uint32 := 0
+        while not parser_check(p, TK_END) and not parser_at_end(p) do
+            var s := parse_stmt(p)
+            if s != 0 then
+                store64(el_stmts + (el_count as uint64) * 8, s)
+                el_count := el_count + 1
+            end
+        end
+        else_block := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(else_block, STMT_BLOCK)
+        node_set_span(else_block, span)
+        store64(else_block + NODE_HDR_BYTES,     el_stmts)
+        store32(else_block + NODE_HDR_BYTES + 8, el_count as int32)
+    end
+    parser_expect(p, TK_END)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 48)
+    node_set_kind(node, STMT_IF)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,      cond)
+    store64(node + NODE_HDR_BYTES + 8,  then_block)
+    store64(node + NODE_HDR_BYTES + 16, elsif_arr)
+    store32(node + NODE_HDR_BYTES + 24, elsif_count as int32)
+    store64(node + NODE_HDR_BYTES + 32, else_block)
+    return node
+end
+
+function parse_while_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'while' */
+    var cond := parse_expr(p)
+    parser_expect(p, TK_DO)
+    var body := parse_block_body_until_end(p, span)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+    node_set_kind(node, STMT_WHILE)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,     cond)
+    store64(node + NODE_HDR_BYTES + 8, body)
+    return node
+end
+
+function parse_for_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'for' */
+    /* for [idx,] item in iter do … end */
+    var index_var: uint32 := 0
+    var index_len: uint32 := 0
+    var item_start := parser_tok_start(p, p.pos)
+    var item_len   := parser_tok_end(p, p.pos) - item_start
+    parser_advance(p)
+
+    /* Check for index variable: "for idx, item in …" */
+    if parser_check(p, TK_COMMA) then
+        parser_advance(p)
+        index_var  := item_start
+        index_len  := item_len
+        item_start := parser_tok_start(p, p.pos)
+        item_len   := parser_tok_end(p, p.pos) - item_start
+        parser_advance(p)
+    end
+
+    parser_expect(p, TK_IN)
+    var iter := parse_expr(p)
+    parser_expect(p, TK_DO)
+    var body := parse_block_body_until_end(p, span)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 48)
+    node_set_kind(node, STMT_FOR)
+    node_set_span(node, span)
+    store32(node + NODE_HDR_BYTES,      item_start as int32)
+    store32(node + NODE_HDR_BYTES + 4,  item_len as int32)
+    store32(node + NODE_HDR_BYTES + 8,  index_var as int32)
+    store32(node + NODE_HDR_BYTES + 12, index_len as int32)
+    store64(node + NODE_HDR_BYTES + 16, iter)
+    store64(node + NODE_HDR_BYTES + 24, body)
+    return node
+end
+
+function parse_loop_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'loop' */
+    var body := parse_block_body_until_end(p, span)
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+    node_set_kind(node, STMT_LOOP)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES, body)
+    return node
+end
+
+function parse_block_body_until_end(p: mut Parser, span: Span): uint64 begin
+    var stmts := maia_mmap(4096)
+    var count: uint32 := 0
+    while not parser_check(p, TK_END) and not parser_at_end(p) do
+        var s := parse_stmt(p)
+        if s != 0 then
+            store64(stmts + (count as uint64) * 8, s)
+            count := count + 1
+        end
+    end
+    parser_expect(p, TK_END)
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+    node_set_kind(node, STMT_BLOCK)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,     stmts)
+    store32(node + NODE_HDR_BYTES + 8, count as int32)
+    return node
+end
+
+function parse_return_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'return' */
+    var value: uint64 := 0
+    var k := parser_peek(p)
+    if k != TK_END and k != TK_ELSIF and k != TK_ELSE and
+       k != TK_EOF and k != TK_SEMICOLON then
+        value := parse_expr(p)
+    end
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+    node_set_kind(node, STMT_RETURN)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES, value)
+    return node
+end
+
+function parse_match_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)  /* 'match' */
+    var subject := parse_expr(p)
+    parser_expect(p, TK_LBRACE)
+
+    var arms := maia_mmap(1024)
+    var arm_count: uint32 := 0
+
+    while not parser_check(p, TK_RBRACE) and not parser_at_end(p) do
+        var arm := parse_match_arm(p)
+        if arm != 0 then
+            store64(arms + (arm_count as uint64) * 8, arm)
+            arm_count := arm_count + 1
+        end
+        parser_try_consume(p, TK_COMMA)
+    end
+    parser_expect(p, TK_RBRACE)
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+    node_set_kind(node, STMT_MATCH)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,      subject)
+    store64(node + NODE_HDR_BYTES + 8,  arms)
+    store32(node + NODE_HDR_BYTES + 16, arm_count as int32)
+    return node
+end
+
+function parse_match_arm(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    /* Pattern: integer literal, ident, string literal, or 'else' */
+    var pattern: uint64 := 0
+    var pat_kind: int32 := 0
+
+    if parser_check(p, TK_ELSE) then
+        pat_kind := 5  /* else pattern */
+        parser_advance(p)
+    elsif parser_check(p, TK_INT_LIT) then
+        pat_kind := 1
+        var ps := parser_current_span(p)
+        pattern := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(pattern, EXPR_INT_LIT)
+        node_set_span(pattern, ps)
+        parser_advance(p)
+    elsif parser_check(p, TK_STRING_LIT) then
+        pat_kind := 2
+        var ps := parser_current_span(p)
+        pattern := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(pattern, EXPR_STRING_LIT)
+        node_set_span(pattern, ps)
+        parser_advance(p)
+    else
+        pat_kind := 3  /* ident pattern */
+        var ps := parser_current_span(p)
+        pattern := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(pattern, EXPR_IDENT)
+        node_set_span(pattern, ps)
+        store32(pattern + NODE_HDR_BYTES, parser_tok_start(p, p.pos) as int32)
+        store32(pattern + NODE_HDR_BYTES + 4, (parser_tok_end(p, p.pos) - parser_tok_start(p, p.pos)) as int32)
+        parser_advance(p)
+    end
+
+    parser_expect(p, TK_FAT_ARROW)
+
+    /* Body: single stmt or begin…end block */
+    var body: uint64 := 0
+    if parser_check(p, TK_BEGIN) then
+        body := parse_block_stmt(p)
+    else
+        body := parse_stmt(p)
+    end
+
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+    node_set_kind(node, 0)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES,      pattern)
+    store32(node + NODE_HDR_BYTES + 8,  pat_kind)
+    store64(node + NODE_HDR_BYTES + 16, body)
+    return node
+end
+
+function parse_defer_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)
+    var body := parse_stmt(p)
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+    node_set_kind(node, STMT_DEFER)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES, body)
+    return node
+end
+
+function parse_unsafe_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)
+    var body := parse_block_stmt(p)
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+    node_set_kind(node, STMT_UNSAFE)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES, body)
+    return node
+end
+
+function parse_safe_stmt(p: mut Parser, span: Span): uint64 begin
+    parser_advance(p)
+    var body := parse_block_stmt(p)
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+    node_set_kind(node, STMT_SAFE)
+    node_set_span(node, span)
+    store64(node + NODE_HDR_BYTES, body)
+    return node
+end
+
+/* ── Expression parser (Pratt / precedence climbing) ─────────────────────────── */
+
+function parse_expr(p: mut Parser): uint64 begin
+    return parse_expr_prec(p, 0)
+end
+
+function parse_expr_prec(p: mut Parser, min_prec: int32): uint64 begin
+    var lhs := parse_unary(p)
+    loop
+        var k := parser_peek(p)
+        var prec := binop_prec(k)
+        if prec < min_prec or prec < 0 then break end
+
+        var span := parser_current_span(p)
+        var op := binop_from_tk(k)
+        parser_advance(p)
+
+        /* Right-associative for range and assign; left-associative otherwise */
+        var next_prec := prec + 1
+        if op == BINOP_RANGE or op == BINOP_RANGE_EXCL then next_prec := prec end
+
+        var rhs := parse_expr_prec(p, next_prec)
+
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+        node_set_kind(node, EXPR_BINARY)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,      lhs)
+        store64(node + NODE_HDR_BYTES + 8,  rhs)
+        store32(node + NODE_HDR_BYTES + 16, op)
+        lhs := node
+    end
+    return lhs
+end
+
+function binop_prec(k: int32): int32 begin
+    if k == TK_OR then return 1 end
+    if k == TK_AND then return 2 end
+    if k == TK_EQ_EQ or k == TK_BANG_EQ then return 3 end
+    if k == TK_LT or k == TK_GT or k == TK_LT_EQ or k == TK_GT_EQ then return 4 end
+    if k == TK_DOT_DOT or k == TK_DOT_DOT_LT then return 5 end
+    if k == TK_PIPE then return 6 end
+    if k == TK_CARET then return 7 end
+    if k == TK_AMP then return 8 end
+    if k == TK_LT_LT or k == TK_GT_GT then return 9 end
+    if k == TK_PLUS or k == TK_MINUS then return 10 end
+    if k == TK_STAR or k == TK_SLASH or k == TK_PERCENT or k == TK_SLASH_SLASH then return 11 end
+    return -1
+end
+
+function binop_from_tk(k: int32): int32 begin
+    if k == TK_PLUS then return BINOP_ADD end
+    if k == TK_MINUS then return BINOP_SUB end
+    if k == TK_STAR then return BINOP_MUL end
+    if k == TK_SLASH then return BINOP_DIV end
+    if k == TK_PERCENT then return BINOP_MOD end
+    if k == TK_SLASH_SLASH then return BINOP_INT_DIV end
+    if k == TK_EQ_EQ then return BINOP_EQ end
+    if k == TK_BANG_EQ then return BINOP_NE end
+    if k == TK_LT then return BINOP_LT end
+    if k == TK_GT then return BINOP_GT end
+    if k == TK_LT_EQ then return BINOP_LE end
+    if k == TK_GT_EQ then return BINOP_GE end
+    if k == TK_AND then return BINOP_AND end
+    if k == TK_OR then return BINOP_OR end
+    if k == TK_AMP then return BINOP_BIT_AND end
+    if k == TK_PIPE then return BINOP_BIT_OR end
+    if k == TK_CARET then return BINOP_BIT_XOR end
+    if k == TK_LT_LT then return BINOP_SHL end
+    if k == TK_GT_GT then return BINOP_SHR end
+    if k == TK_DOT_DOT then return BINOP_RANGE end
+    if k == TK_DOT_DOT_LT then return BINOP_RANGE_EXCL end
+    return BINOP_ADD
+end
+
+function parse_unary(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    var k := parser_peek(p)
+
+    if k == TK_MINUS then
+        parser_advance(p)
+        var operand := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, EXPR_UNARY)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,     operand)
+        store32(node + NODE_HDR_BYTES + 8, UNOP_NEG)
+        return node
+    end
+    if k == TK_NOT or k == TK_BANG then
+        parser_advance(p)
+        var operand := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, EXPR_UNARY)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,     operand)
+        store32(node + NODE_HDR_BYTES + 8, UNOP_NOT)
+        return node
+    end
+    if k == TK_TILDE then
+        parser_advance(p)
+        var operand := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, EXPR_UNARY)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,     operand)
+        store32(node + NODE_HDR_BYTES + 8, UNOP_BIT_NOT)
+        return node
+    end
+    if k == TK_AMP then
+        parser_advance(p)
+        var operand := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, EXPR_UNARY)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,     operand)
+        store32(node + NODE_HDR_BYTES + 8, UNOP_ADDR_OF)
+        return node
+    end
+    if k == TK_STAR then
+        parser_advance(p)
+        var operand := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, EXPR_UNARY)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,     operand)
+        store32(node + NODE_HDR_BYTES + 8, UNOP_DEREF)
+        return node
+    end
+    if k == TK_CONSUME then
+        parser_advance(p)
+        var operand := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_CONSUME)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES, operand)
+        return node
+    end
+    if k == TK_AWAIT then
+        parser_advance(p)
+        var operand := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_AWAIT)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES, operand)
+        return node
+    end
+    if k == TK_SPAWN then
+        parser_advance(p)
+        var call := parse_unary(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_SPAWN)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES, call)
+        return node
+    end
+
+    return parse_postfix(p)
+end
+
+function parse_postfix(p: mut Parser): uint64 begin
+    var lhs := parse_primary(p)
+    loop
+        var span := parser_current_span(p)
+        var k := parser_peek(p)
+
+        /* Cast: expr as Type */
+        if k == TK_AS then
+            parser_advance(p)
+            var ty := parse_type_expr(p)
+            var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+            node_set_kind(node, EXPR_CAST)
+            node_set_span(node, span)
+            store64(node + NODE_HDR_BYTES,     lhs)
+            store64(node + NODE_HDR_BYTES + 8, ty)
+            lhs := node
+            continue
+        end
+
+        /* Default operator: expr ?? fallback */
+        if k == TK_QUESTION_QUESTION then
+            parser_advance(p)
+            var fallback := parse_expr_prec(p, 0)
+            var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+            node_set_kind(node, EXPR_DEFAULT)
+            node_set_span(node, span)
+            store64(node + NODE_HDR_BYTES,     lhs)
+            store64(node + NODE_HDR_BYTES + 8, fallback)
+            lhs := node
+            continue
+        end
+
+        /* Call: expr(args) */
+        if k == TK_LPAREN then
+            parser_advance(p)
+            var args := maia_mmap(512)
+            var arg_count: uint32 := 0
+            while not parser_check(p, TK_RPAREN) and not parser_at_end(p) do
+                var a := parse_expr(p)
+                store64(args + (arg_count as uint64) * 8, a)
+                arg_count := arg_count + 1
+                if parser_check(p, TK_COMMA) then parser_advance(p) end
+            end
+            parser_try_consume(p, TK_RPAREN)
+            var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+            node_set_kind(node, EXPR_CALL)
+            node_set_span(node, span)
+            store64(node + NODE_HDR_BYTES,      lhs)
+            store64(node + NODE_HDR_BYTES + 8,  args)
+            store32(node + NODE_HDR_BYTES + 16, arg_count as int32)
+            lhs := node
+            continue
+        end
+
+        /* Index: expr[idx] */
+        if k == TK_LBRACKET then
+            parser_advance(p)
+            var idx := parse_expr(p)
+            /* Slice: expr[lo..hi] */
+            if parser_check(p, TK_DOT_DOT) or parser_check(p, TK_DOT_DOT_LT) then
+                var excl := if parser_check(p, TK_DOT_DOT_LT) then 1 else 0 end
+                parser_advance(p)
+                var hi: uint64 := 0
+                if not parser_check(p, TK_RBRACKET) then hi := parse_expr(p) end
+                parser_expect(p, TK_RBRACKET)
+                var node := ast_alloc(p.arena, NODE_HDR_BYTES + 32)
+                node_set_kind(node, EXPR_SLICE_EXPR)
+                node_set_span(node, span)
+                store64(node + NODE_HDR_BYTES,      lhs)
+                store64(node + NODE_HDR_BYTES + 8,  idx)
+                store64(node + NODE_HDR_BYTES + 16, hi)
+                store32(node + NODE_HDR_BYTES + 24, excl)
+                lhs := node
+            else
+                parser_expect(p, TK_RBRACKET)
+                var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+                node_set_kind(node, EXPR_INDEX)
+                node_set_span(node, span)
+                store64(node + NODE_HDR_BYTES,     lhs)
+                store64(node + NODE_HDR_BYTES + 8, idx)
+                lhs := node
+            end
+            continue
+        end
+
+        /* Field access or method call: expr.name or expr.name(args) */
+        if k == TK_DOT then
+            parser_advance(p)
+            var field_start := parser_tok_start(p, p.pos)
+            var field_len   := parser_tok_end(p, p.pos) - field_start
+            parser_advance(p)
+
+            if parser_check(p, TK_LPAREN) then
+                /* Method call */
+                parser_advance(p)
+                var args := maia_mmap(512)
+                var arg_count: uint32 := 0
+                while not parser_check(p, TK_RPAREN) and not parser_at_end(p) do
+                    var a := parse_expr(p)
+                    store64(args + (arg_count as uint64) * 8, a)
+                    arg_count := arg_count + 1
+                    if parser_check(p, TK_COMMA) then parser_advance(p) end
+                end
+                parser_try_consume(p, TK_RPAREN)
+                var node := ast_alloc(p.arena, NODE_HDR_BYTES + 32)
+                node_set_kind(node, EXPR_METHOD_CALL)
+                node_set_span(node, span)
+                store64(node + NODE_HDR_BYTES,      lhs)
+                store32(node + NODE_HDR_BYTES + 8,  field_start as int32)
+                store32(node + NODE_HDR_BYTES + 12, field_len as int32)
+                store64(node + NODE_HDR_BYTES + 16, args)
+                store32(node + NODE_HDR_BYTES + 24, arg_count as int32)
+                lhs := node
+            else
+                /* Field access */
+                var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+                node_set_kind(node, EXPR_FIELD)
+                node_set_span(node, span)
+                store64(node + NODE_HDR_BYTES,     lhs)
+                store32(node + NODE_HDR_BYTES + 8,  field_start as int32)
+                store32(node + NODE_HDR_BYTES + 12, field_len as int32)
+                lhs := node
+            end
+            continue
+        end
+
+        break
+    end
+    return lhs
+end
+
+function parse_primary(p: mut Parser): uint64 begin
+    var span := parser_current_span(p)
+    var k := parser_peek(p)
+
+    /* Integer literal */
+    if k == TK_INT_LIT then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_INT_LIT)
+        node_set_span(node, span)
+        return node
+    end
+
+    /* Float literal */
+    if k == TK_FLOAT_LIT then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_FLOAT_LIT)
+        node_set_span(node, span)
+        return node
+    end
+
+    /* String literal */
+    if k == TK_STRING_LIT then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_STRING_LIT)
+        node_set_span(node, span)
+        return node
+    end
+
+    /* Bool literals */
+    if k == TK_TRUE then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_BOOL_LIT)
+        node_set_span(node, span)
+        store32(node + NODE_HDR_BYTES, 1)
+        return node
+    end
+    if k == TK_FALSE then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_BOOL_LIT)
+        node_set_span(node, span)
+        store32(node + NODE_HDR_BYTES, 0)
+        return node
+    end
+
+    /* Null literal */
+    if k == TK_NULL then
+        parser_advance(p)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES)
+        node_set_kind(node, EXPR_NULL_LIT)
+        node_set_span(node, span)
+        return node
+    end
+
+    /* Grouped expression: ( expr ) */
+    if k == TK_LPAREN then
+        parser_advance(p)
+        var inner := parse_expr(p)
+        parser_expect(p, TK_RPAREN)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 8)
+        node_set_kind(node, EXPR_GROUPED)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES, inner)
+        return node
+    end
+
+    /* Array literal: [ e1, e2, … ] */
+    if k == TK_LBRACKET then
+        parser_advance(p)
+        var elems := maia_mmap(512)
+        var elem_count: uint32 := 0
+        while not parser_check(p, TK_RBRACKET) and not parser_at_end(p) do
+            var e := parse_expr(p)
+            store64(elems + (elem_count as uint64) * 8, e)
+            elem_count := elem_count + 1
+            if parser_check(p, TK_COMMA) then parser_advance(p) end
+        end
+        parser_expect(p, TK_RBRACKET)
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, EXPR_ARRAY_LIT)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,     elems)
+        store32(node + NODE_HDR_BYTES + 8, elem_count as int32)
+        return node
+    end
+
+    /* Builtin call: @name(args) */
+    if k == TK_AT then
+        parser_advance(p)
+        var name_start := parser_tok_start(p, p.pos)
+        var name_len   := parser_tok_end(p, p.pos) - name_start
+        parser_advance(p)
+        var args := maia_mmap(128)
+        var arg_count: uint32 := 0
+        if parser_check(p, TK_LPAREN) then
+            parser_advance(p)
+            while not parser_check(p, TK_RPAREN) and not parser_at_end(p) do
+                var a := parse_expr(p)
+                store64(args + (arg_count as uint64) * 8, a)
+                arg_count := arg_count + 1
+                if parser_check(p, TK_COMMA) then parser_advance(p) end
+            end
+            parser_try_consume(p, TK_RPAREN)
+        end
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+        node_set_kind(node, EXPR_BUILTIN_CALL)
+        node_set_span(node, span)
+        store32(node + NODE_HDR_BYTES,      name_start as int32)
+        store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+        store64(node + NODE_HDR_BYTES + 8,  args)
+        store32(node + NODE_HDR_BYTES + 16, arg_count as int32)
+        return node
+    end
+
+    /* If expression (used as expr, e.g. `if cond then val else val end`) */
+    if k == TK_IF then
+        parser_advance(p)
+        var cond := parse_expr(p)
+        parser_expect(p, TK_THEN)
+        var then_val := parse_expr(p)
+        var else_val: uint64 := 0
+        if parser_check(p, TK_ELSE) then
+            parser_advance(p)
+            else_val := parse_expr(p)
+        end
+        parser_try_consume(p, TK_END)
+        /* Reuse STMT_IF node as inline-if expression (kind = STMT_IF, but treated as expr) */
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 24)
+        node_set_kind(node, STMT_IF)
+        node_set_span(node, span)
+        store64(node + NODE_HDR_BYTES,      cond)
+        store64(node + NODE_HDR_BYTES + 8,  then_val)
+        store64(node + NODE_HDR_BYTES + 16, else_val)
+        return node
+    end
+
+    /* Identifier (or struct literal) */
+    if k == TK_IDENT then
+        var name_start := parser_tok_start(p, p.pos)
+        var name_len   := parser_tok_end(p, p.pos) - name_start
+        parser_advance(p)
+
+        /* Struct literal: Ident { .field = expr, … } */
+        if parser_check(p, TK_LBRACE) then
+            parser_advance(p)
+            var fields := maia_mmap(512)
+            var field_count: uint32 := 0
+            while not parser_check(p, TK_RBRACE) and not parser_at_end(p) do
+                if parser_check(p, TK_DOT) then
+                    parser_advance(p)
+                    var fn_start := parser_tok_start(p, p.pos)
+                    var fn_len   := parser_tok_end(p, p.pos) - fn_start
+                    parser_advance(p)
+                    parser_expect(p, TK_EQ)
+                    var fval := parse_expr(p)
+                    /* Store field init as (name_start, name_len, val) triple */
+                    store32(fields + (field_count as uint64) * 24,      fn_start as int32)
+                    store32(fields + (field_count as uint64) * 24 + 4,  fn_len as int32)
+                    store64(fields + (field_count as uint64) * 24 + 8,  fval)
+                    field_count := field_count + 1
+                    if parser_check(p, TK_COMMA) then parser_advance(p) end
+                else
+                    parser_advance(p)
+                end
+            end
+            parser_expect(p, TK_RBRACE)
+            var node := ast_alloc(p.arena, NODE_HDR_BYTES + 32)
+            node_set_kind(node, EXPR_STRUCT_LIT)
+            node_set_span(node, span)
+            store32(node + NODE_HDR_BYTES,      name_start as int32)
+            store32(node + NODE_HDR_BYTES + 4,  name_len as int32)
+            store64(node + NODE_HDR_BYTES + 8,  fields)
+            store32(node + NODE_HDR_BYTES + 16, field_count as int32)
+            return node
+        end
+
+        var node := ast_alloc(p.arena, NODE_HDR_BYTES + 16)
+        node_set_kind(node, EXPR_IDENT)
+        node_set_span(node, span)
+        store32(node + NODE_HDR_BYTES,     name_start as int32)
+        store32(node + NODE_HDR_BYTES + 4, name_len as int32)
+        return node
+    end
+
+    /* Wildcard/placeholder expression */
+    var node := ast_alloc(p.arena, NODE_HDR_BYTES)
+    node_set_kind(node, EXPR_NULL_LIT)
+    node_set_span(node, span)
+    return node
+end

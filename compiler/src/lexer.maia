@@ -1,0 +1,871 @@
+/// Maia self-hosted compiler — lexer.
+/// Produces a flat token stream from UTF-8 source text.
+/// Block comments /* … */ may be nested.  Doc comments use /// syntax.
+
+module Lexer
+
+/* ── Token kind constants ────────────────────────────────────────────────────── */
+/* Encoded as int32 so the bootstrap compiler can pattern-match on them. */
+
+const TK_INT_LIT:    int32 = 0
+const TK_FLOAT_LIT:  int32 = 1
+const TK_STRING_LIT: int32 = 2
+const TK_IDENT:      int32 = 3
+
+/* Keywords */
+const TK_MODULE:    int32 = 10
+const TK_USE:       int32 = 11
+const TK_EXPORT:    int32 = 12
+const TK_VAR:       int32 = 13
+const TK_CONST:     int32 = 14
+const TK_FUNCTION:  int32 = 15
+const TK_PROCEDURE: int32 = 16
+const TK_TYPE:      int32 = 17
+const TK_STRUCT:    int32 = 18
+const TK_ENUM:      int32 = 19
+const TK_BEGIN:     int32 = 20
+const TK_END:       int32 = 21
+const TK_IF:        int32 = 22
+const TK_THEN:      int32 = 23
+const TK_ELSIF:     int32 = 24
+const TK_ELSE:      int32 = 25
+const TK_FOR:       int32 = 26
+const TK_WHILE:     int32 = 27
+const TK_DO:        int32 = 28
+const TK_LOOP:      int32 = 29
+const TK_BREAK:     int32 = 30
+const TK_CONTINUE:  int32 = 31
+const TK_RETURN:    int32 = 32
+const TK_MATCH:     int32 = 33
+const TK_AS:        int32 = 34
+const TK_NULL:      int32 = 35
+const TK_TRUE:      int32 = 36
+const TK_FALSE:     int32 = 37
+const TK_OWN:       int32 = 38
+const TK_REF:       int32 = 39
+const TK_MUT:       int32 = 40
+const TK_RC:        int32 = 41
+const TK_WEAK:      int32 = 42
+const TK_ISO:       int32 = 43
+const TK_TRN:       int32 = 44
+const TK_VAL:       int32 = 45
+const TK_BOX:       int32 = 46
+const TK_TAG:       int32 = 47
+const TK_ACTOR:     int32 = 48
+const TK_BEHAVIOR:  int32 = 49
+const TK_SPAWN:     int32 = 50
+const TK_AWAIT:     int32 = 51
+const TK_ASYNC:     int32 = 52
+const TK_DEFER:     int32 = 53
+const TK_UNSAFE:    int32 = 54
+const TK_SAFE:      int32 = 55
+const TK_CONSUME:   int32 = 56
+const TK_EXTERN:    int32 = 57
+const TK_INLINE:    int32 = 58
+const TK_PACKAGE:   int32 = 59
+const TK_IN:        int32 = 60
+const TK_WAIT:      int32 = 61
+const TK_COMPTIME:  int32 = 62
+const TK_AND:       int32 = 63
+const TK_OR:        int32 = 64
+const TK_NOT:       int32 = 65
+
+/* Arithmetic operators */
+const TK_PLUS:       int32 = 70
+const TK_MINUS:      int32 = 71
+const TK_STAR:       int32 = 72
+const TK_SLASH:      int32 = 73
+const TK_PERCENT:    int32 = 74
+const TK_SLASH_SLASH:int32 = 75
+
+/* Comparison operators */
+const TK_EQ_EQ:  int32 = 80
+const TK_BANG_EQ:int32 = 81
+const TK_LT:     int32 = 82
+const TK_GT:     int32 = 83
+const TK_LT_EQ:  int32 = 84
+const TK_GT_EQ:  int32 = 85
+
+/* Bitwise operators */
+const TK_AMP:   int32 = 90
+const TK_PIPE:  int32 = 91
+const TK_CARET: int32 = 92
+const TK_TILDE: int32 = 93
+const TK_LT_LT: int32 = 94
+const TK_GT_GT: int32 = 95
+
+/* Assignment operators */
+const TK_COLON_EQ:  int32 = 100
+const TK_PLUS_EQ:   int32 = 101
+const TK_MINUS_EQ:  int32 = 102
+const TK_STAR_EQ:   int32 = 103
+const TK_SLASH_EQ:  int32 = 104
+const TK_PERCENT_EQ:int32 = 105
+const TK_AMP_EQ:    int32 = 106
+const TK_PIPE_EQ:   int32 = 107
+const TK_CARET_EQ:  int32 = 108
+const TK_LT_LT_EQ:  int32 = 109
+const TK_GT_GT_EQ:  int32 = 110
+
+/* Range */
+const TK_DOT_DOT:    int32 = 115
+const TK_DOT_DOT_LT: int32 = 116
+
+/* Misc */
+const TK_EQ:               int32 = 120
+const TK_BANG:             int32 = 121
+const TK_QUESTION:         int32 = 122
+const TK_QUESTION_QUESTION:int32 = 123
+const TK_AT:               int32 = 124
+const TK_ARROW:            int32 = 125
+const TK_FAT_ARROW:        int32 = 126
+const TK_DOT:              int32 = 127
+const TK_DOT_DOT_DOT:      int32 = 128
+
+/* Delimiters */
+const TK_LPAREN:   int32 = 130
+const TK_RPAREN:   int32 = 131
+const TK_LBRACKET: int32 = 132
+const TK_RBRACKET: int32 = 133
+const TK_LBRACE:   int32 = 134
+const TK_RBRACE:   int32 = 135
+const TK_COMMA:    int32 = 136
+const TK_SEMICOLON:int32 = 137
+const TK_COLON:    int32 = 138
+
+/* Synthetic */
+const TK_DOC_COMMENT: int32 = 140
+const TK_EOF:         int32 = 141
+const TK_INVALID:     int32 = 142
+
+/* ── Token ───────────────────────────────────────────────────────────────────── */
+
+type Token = struct {
+    kind:  int32,
+    start: uint32,
+    tok_end: uint32,
+    line:  uint32,
+    col:   uint32,
+}
+
+/* ── Token array (growable) ──────────────────────────────────────────────────── */
+
+type TokenArray = struct {
+    ptr:  uint64,  /* pointer to Token[] (8 bytes each — we pack kind+start+end+line+col as 5 × int32) */
+    len:  uint32,
+    cap:  uint32,
+}
+
+const TOKEN_BYTES: uint32 = 20  /* 5 × 4-byte fields per token */
+
+extern function maia_mmap(len: uint64): uint64
+extern function maia_exit(code: int32)
+extern function store32(addr: uint64, v: int32)
+extern function load32(addr: uint64): int32
+
+function token_array_new(): TokenArray begin
+    const initial_cap: uint32 = 256
+    var ptr := maia_mmap((initial_cap as uint64) * TOKEN_BYTES as uint64)
+    return TokenArray { .ptr = ptr, .len = 0, .cap = initial_cap }
+end
+
+procedure token_array_push(arr: mut TokenArray, tok: Token) begin
+    if arr.len == arr.cap then
+        const new_cap := arr.cap * 2
+        var new_ptr := maia_mmap((new_cap as uint64) * TOKEN_BYTES as uint64)
+        /* copy old data (no memcpy in bootstrap — use write loop) */
+        var i: uint32 := 0
+        while i < arr.len do
+            var src_base := arr.ptr + (i as uint64) * TOKEN_BYTES as uint64
+            var dst_base := new_ptr  + (i as uint64) * TOKEN_BYTES as uint64
+            store32(dst_base,      load32(src_base))
+            store32(dst_base + 4,  load32(src_base + 4))
+            store32(dst_base + 8,  load32(src_base + 8))
+            store32(dst_base + 12, load32(src_base + 12))
+            store32(dst_base + 16, load32(src_base + 16))
+            i := i + 1
+        end
+        arr.ptr := new_ptr
+        arr.cap := new_cap
+    end
+    /* Store token fields at arr.ptr + arr.len * TOKEN_BYTES */
+    var base := arr.ptr + (arr.len as uint64) * TOKEN_BYTES as uint64
+    store32(base,      tok.kind)
+    store32(base + 4,  tok.start as int32)
+    store32(base + 8,  tok.tok_end as int32)
+    store32(base + 12, tok.line as int32)
+    store32(base + 16, tok.col as int32)
+    arr.len := arr.len + 1
+end
+
+/* ── Keyword table ───────────────────────────────────────────────────────────── */
+/* Returns the keyword TK_* constant for the given identifier slice, or TK_IDENT. */
+
+function kw_lookup(src: uint64, start: uint32, end_: uint32): int32 begin
+    /* Compare byte-by-byte via pointer arithmetic. */
+    /* src is a pointer (uint64) to the source bytes. */
+    var len := end_ - start
+    if len == 2 then
+        /* "do", "if", "as", "in", "or" */
+        var c0 := src_byte(src, start + 0)
+        var c1 := src_byte(src, start + 1)
+        if c0 == 100 and c1 == 111 then return TK_DO end  /* "do" */
+        if c0 == 105 and c1 == 102 then return TK_IF end  /* "if" */
+        if c0 == 97  and c1 == 115 then return TK_AS end  /* "as" */
+        if c0 == 105 and c1 == 110 then return TK_IN end  /* "in" */
+        if c0 == 111 and c1 == 114 then return TK_OR end  /* "or" */
+        if c0 == 114 and c1 == 99  then return TK_RC end  /* "rc" */
+        return TK_IDENT
+    end
+    if len == 3 then
+        var c0 := src_byte(src, start + 0)
+        var c1 := src_byte(src, start + 1)
+        var c2 := src_byte(src, start + 2)
+        if c0 == 118 and c1 == 97  and c2 == 114  then return TK_VAR end  /* "var" */
+        if c0 == 102 and c1 == 111 and c2 == 114  then return TK_FOR end  /* "for" */
+        if c0 == 110 and c1 == 111 and c2 == 116  then return TK_NOT end  /* "not" */
+        if c0 == 111 and c1 == 119 and c2 == 110  then return TK_OWN end  /* "own" */
+        if c0 == 114 and c1 == 101 and c2 == 102  then return TK_REF end  /* "ref" */
+        if c0 == 109 and c1 == 117 and c2 == 116  then return TK_MUT end  /* "mut" */
+        if c0 == 105 and c1 == 115 and c2 == 111  then return TK_ISO end  /* "iso" */
+        if c0 == 116 and c1 == 114 and c2 == 110  then return TK_TRN end  /* "trn" */
+        if c0 == 118 and c1 == 97  and c2 == 108  then return TK_VAL end  /* "val" */
+        if c0 == 98  and c1 == 111 and c2 == 120  then return TK_BOX end  /* "box" */
+        if c0 == 116 and c1 == 97  and c2 == 103  then return TK_TAG end  /* "tag" */
+        if c0 == 117 and c1 == 115 and c2 == 101  then return TK_USE end  /* "use" */
+        if c0 == 101 and c1 == 110 and c2 == 100  then return TK_END end  /* "end" */
+        return TK_IDENT
+    end
+    if len == 4 then
+        var c0 := src_byte(src, start + 0)
+        var c1 := src_byte(src, start + 1)
+        var c2 := src_byte(src, start + 2)
+        var c3 := src_byte(src, start + 3)
+        if c0 == 116 and c1 == 104 and c2 == 101 and c3 == 110 then return TK_THEN end  /* "then" */
+        if c0 == 101 and c1 == 108 and c2 == 115 and c3 == 101 then return TK_ELSE end  /* "else" */
+        if c0 == 108 and c1 == 111 and c2 == 111 and c3 == 112 then return TK_LOOP end  /* "loop" */
+        if c0 == 110 and c1 == 117 and c2 == 108 and c3 == 108 then return TK_NULL end  /* "null" */
+        if c0 == 116 and c1 == 114 and c2 == 117 and c3 == 101 then return TK_TRUE end  /* "true" */
+        if c0 == 119 and c1 == 97  and c2 == 105 and c3 == 116 then return TK_WAIT end  /* "wait" */
+        if c0 == 101 and c1 == 110 and c2 == 117 and c3 == 109 then return TK_ENUM end  /* "enum" */
+        if c0 == 116 and c1 == 121 and c2 == 112 and c3 == 101 then return TK_TYPE end  /* "type" */
+        if c0 == 119 and c1 == 101 and c2 == 97  and c3 == 107 then return TK_WEAK end  /* "weak" */
+        if c0 == 119 and c1 == 97  and c2 == 105 and c3 == 116 then return TK_WAIT end  /* "wait" */
+        return TK_IDENT
+    end
+    if len == 5 then
+        var c0 := src_byte(src, start + 0)
+        var c1 := src_byte(src, start + 1)
+        var c2 := src_byte(src, start + 2)
+        var c3 := src_byte(src, start + 3)
+        var c4 := src_byte(src, start + 4)
+        if c0 == 98  and c1 == 101 and c2 == 103 and c3 == 105 and c4 == 110 then return TK_BEGIN end  /* "begin" */
+        if c0 == 119 and c1 == 104 and c2 == 105 and c3 == 108 and c4 == 101 then return TK_WHILE end  /* "while" */
+        if c0 == 98  and c1 == 114 and c2 == 101 and c3 == 97  and c4 == 107 then return TK_BREAK end  /* "break" */
+        if c0 == 109 and c1 == 97  and c2 == 116 and c3 == 99  and c4 == 104 then return TK_MATCH end  /* "match" */
+        if c0 == 115 and c1 == 112 and c2 == 97  and c3 == 119 and c4 == 110 then return TK_SPAWN end  /* "spawn" */
+        if c0 == 97  and c1 == 119 and c2 == 97  and c3 == 105 and c4 == 116 then return TK_AWAIT end  /* "await" */
+        if c0 == 97  and c1 == 115 and c2 == 121 and c3 == 110 and c4 == 99  then return TK_ASYNC end  /* "async" */
+        if c0 == 100 and c1 == 101 and c2 == 102 and c3 == 101 and c4 == 114 then return TK_DEFER end  /* "defer" */
+        if c0 == 117 and c1 == 110 and c2 == 115 and c3 == 97  and c4 == 102 then return TK_UNSAFE end  /* ... need 6 chars for "unsafe" */
+        if c0 == 99  and c1 == 111 and c2 == 110 and c3 == 115 and c4 == 116 then return TK_CONST end  /* "const" */
+        if c0 == 97  and c1 == 99  and c2 == 116 and c3 == 111 and c4 == 114 then return TK_ACTOR end  /* "actor" */
+        if c0 == 102 and c1 == 97  and c2 == 108 and c3 == 115 and c4 == 101 then return TK_FALSE end  /* "false" */
+        return TK_IDENT
+    end
+    if len == 6 then
+        var c0 := src_byte(src, start + 0)
+        var c1 := src_byte(src, start + 1)
+        var c2 := src_byte(src, start + 2)
+        var c3 := src_byte(src, start + 3)
+        var c4 := src_byte(src, start + 4)
+        var c5 := src_byte(src, start + 5)
+        if c0 == 109 and c1 == 111 and c2 == 100 and c3 == 117 and c4 == 108 and c5 == 101 then return TK_MODULE end  /* "module" */
+        if c0 == 114 and c1 == 101 and c2 == 116 and c3 == 117 and c4 == 114 and c5 == 110 then return TK_RETURN end  /* "return" */
+        if c0 == 115 and c1 == 116 and c2 == 114 and c3 == 117 and c4 == 99  and c5 == 116 then return TK_STRUCT end  /* "struct" */
+        if c0 == 101 and c1 == 120 and c2 == 116 and c3 == 101 and c4 == 114 and c5 == 110 then return TK_EXTERN end  /* "extern" */
+        if c0 == 105 and c1 == 110 and c2 == 108 and c3 == 105 and c4 == 110 and c5 == 101 then return TK_INLINE end  /* "inline" */
+        if c0 == 117 and c1 == 110 and c2 == 115 and c3 == 97  and c4 == 102 and c5 == 101 then return TK_UNSAFE end  /* "unsafe" */
+        if c0 == 101 and c1 == 120 and c2 == 112 and c3 == 111 and c4 == 114 and c5 == 116 then return TK_EXPORT end  /* "export" */
+        if c0 == 115 and c1 == 112 and c2 == 97  and c3 == 119 and c4 == 110 then return TK_SPAWN end
+        return TK_IDENT
+    end
+    if len == 7 then
+        var c0 := src_byte(src, start + 0)
+        if c0 == 101 then
+            /* "elsif" is 5 chars, check "package" and others */
+            var c1 := src_byte(src, start + 1)
+            if c1 == 108 then
+                /* "elsif" — check */
+                var c2 := src_byte(src, start + 2)
+                var c3 := src_byte(src, start + 3)
+                var c4 := src_byte(src, start + 4)
+                if c2 == 115 and c3 == 105 and c4 == 102 then
+                    var c5 := src_byte(src, start + 5)
+                    if c5 == 115 then return TK_ELSIF end  /* ... wait "elsif" is 5 chars */
+                end
+            end
+        end
+        /* "package" */
+        var p0 := src_byte(src, start)
+        if p0 == 112 then
+            /* "package" = p(112) a(97) c(99) k(107) a(97) g(103) e(101) */
+            if src_byte(src, start+1) == 97  and src_byte(src, start+2) == 99 and
+               src_byte(src, start+3) == 107 and src_byte(src, start+4) == 97 and
+               src_byte(src, start+5) == 103 and src_byte(src, start+6) == 101 then
+                return TK_PACKAGE
+            end
+        end
+        /* "consume" */
+        if p0 == 99 then
+            if src_byte(src, start+1) == 111 and src_byte(src, start+2) == 110 and
+               src_byte(src, start+3) == 115 and src_byte(src, start+4) == 117 and
+               src_byte(src, start+5) == 109 and src_byte(src, start+6) == 101 then
+                return TK_CONSUME
+            end
+        end
+        return TK_IDENT
+    end
+    if len == 5 then
+        var c0 := src_byte(src, start)
+        /* "elsif" = e(101) l(108) s(115) i(105) f(102) */
+        if c0 == 101 and src_byte(src, start+1) == 108 and src_byte(src, start+2) == 115 and
+           src_byte(src, start+3) == 105 and src_byte(src, start+4) == 102 then
+            return TK_ELSIF
+        end
+    end
+    if len == 8 then
+        var c0 := src_byte(src, start)
+        /* "function" = f(102) u(117) n(110) c(99) t(116) i(105) o(111) n(110) */
+        if c0 == 102 and src_byte(src, start+1) == 117 and src_byte(src, start+2) == 110 and
+           src_byte(src, start+3) == 99 and src_byte(src, start+4) == 116 and
+           src_byte(src, start+5) == 105 and src_byte(src, start+6) == 111 and
+           src_byte(src, start+7) == 110 then
+            return TK_FUNCTION
+        end
+        /* "behavior" = b(98) e(101) h(104) a(97) v(118) i(105) o(111) r(114) */
+        if c0 == 98 and src_byte(src, start+1) == 101 and src_byte(src, start+2) == 104 and
+           src_byte(src, start+3) == 97 and src_byte(src, start+4) == 118 and
+           src_byte(src, start+5) == 105 and src_byte(src, start+6) == 111 and
+           src_byte(src, start+7) == 114 then
+            return TK_BEHAVIOR
+        end
+        /* "continue" = c(99) o(111) n(110) t(116) i(105) n(110) u(117) e(101) */
+        if c0 == 99 and src_byte(src, start+1) == 111 and src_byte(src, start+2) == 110 and
+           src_byte(src, start+3) == 116 and src_byte(src, start+4) == 105 and
+           src_byte(src, start+5) == 110 and src_byte(src, start+6) == 117 and
+           src_byte(src, start+7) == 101 then
+            return TK_CONTINUE
+        end
+        /* "comptime" = c(99) o(111) m(109) p(112) t(116) i(105) m(109) e(101) */
+        if c0 == 99 and src_byte(src, start+1) == 111 and src_byte(src, start+2) == 109 and
+           src_byte(src, start+3) == 112 and src_byte(src, start+4) == 116 and
+           src_byte(src, start+5) == 105 and src_byte(src, start+6) == 109 and
+           src_byte(src, start+7) == 101 then
+            return TK_COMPTIME
+        end
+    end
+    if len == 9 then
+        var c0 := src_byte(src, start)
+        /* "procedure" = p(112) r(114) o(111) c(99) e(101) d(100) u(117) r(114) e(101) */
+        if c0 == 112 and src_byte(src, start+1) == 114 and src_byte(src, start+2) == 111 and
+           src_byte(src, start+3) == 99 and src_byte(src, start+4) == 101 and
+           src_byte(src, start+5) == 100 and src_byte(src, start+6) == 117 and
+           src_byte(src, start+7) == 114 and src_byte(src, start+8) == 101 then
+            return TK_PROCEDURE
+        end
+    end
+    return TK_IDENT
+end
+
+/* Load a single byte from a source buffer pointer + offset. */
+/* src is a uint64 holding the mmap'd file address. */
+function src_byte(src: uint64, offset: uint32): int32 begin
+    var addr := src + offset as uint64
+    return load_byte(addr)
+end
+
+/* Platform primitive: load one byte from memory address. */
+/* Implemented as a compiler intrinsic / inline by the self-hosted compiler; */
+/* the bootstrap uses pointer-indexed load IR. */
+extern function load_byte(addr: uint64): int32
+
+/* ── Lexer state ─────────────────────────────────────────────────────────────── */
+
+type Lexer = struct {
+    src:        uint64,  /* pointer to source bytes */
+    src_len:    uint32,
+    pos:        uint32,
+    line:       uint32,
+    line_start: uint32,
+}
+
+function lexer_new(src: uint64, src_len: uint32): Lexer begin
+    return Lexer {
+        .src        = src,
+        .src_len    = src_len,
+        .pos        = 0,
+        .line       = 1,
+        .line_start = 0,
+    }
+end
+
+/* Tokenize the entire source into a TokenArray. */
+function lexer_tokenize(lex: mut Lexer): TokenArray begin
+    var arr := token_array_new()
+    loop
+        var tok := lexer_next(lex)
+        token_array_push(arr, tok)
+        if tok.kind == TK_EOF then
+            break
+        end
+    end
+    return arr
+end
+
+/* ── Single-token scanner ────────────────────────────────────────────────────── */
+
+function lexer_next(lex: mut Lexer): Token begin
+    lexer_skip_whitespace(lex)
+
+    var start := lex.pos
+    var line  := lex.line
+    var col   := start - lex.line_start + 1
+
+    if lex.pos >= lex.src_len then
+        return Token { .kind = TK_EOF, .start = start, .tok_end = start, .line = line, .col = col }
+    end
+
+    var c := src_byte(lex.src, lex.pos)
+    lex.pos := lex.pos + 1
+
+    var kind: int32 := TK_INVALID
+
+    if c == 40 then kind := TK_LPAREN   end  /* ( */
+    if c == 41 then kind := TK_RPAREN   end  /* ) */
+    if c == 91 then kind := TK_LBRACKET end  /* [ */
+    if c == 93 then kind := TK_RBRACKET end  /* ] */
+    if c == 123 then kind := TK_LBRACE  end  /* { */
+    if c == 125 then kind := TK_RBRACE  end  /* } */
+    if c == 44 then kind := TK_COMMA    end  /* , */
+    if c == 59 then kind := TK_SEMICOLON end  /* ; */
+    if c == 126 then kind := TK_TILDE   end  /* ~ */
+    if c == 64 then kind := TK_AT       end  /* @ */
+
+    if kind != TK_INVALID then
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Dot family: . .. ... ..< */
+    if c == 46 then  /* '.' */
+        if lexer_peek(lex) == 46 then  /* '..' */
+            lex.pos := lex.pos + 1
+            if lexer_peek(lex) == 46 then  /* '...' */
+                lex.pos := lex.pos + 1
+                kind := TK_DOT_DOT_DOT
+            elsif lexer_peek(lex) == 60 then  /* '..<' */
+                lex.pos := lex.pos + 1
+                kind := TK_DOT_DOT_LT
+            else
+                kind := TK_DOT_DOT
+            end
+        else
+            kind := TK_DOT
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Colon: : := */
+    if c == 58 then  /* ':' */
+        if lexer_peek(lex) == 61 then  /* '=' */
+            lex.pos := lex.pos + 1
+            kind := TK_COLON_EQ
+        else
+            kind := TK_COLON
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Equals: = == => */
+    if c == 61 then  /* '=' */
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_EQ_EQ
+        elsif lexer_peek(lex) == 62 then  /* '>' */
+            lex.pos := lex.pos + 1
+            kind := TK_FAT_ARROW
+        else
+            kind := TK_EQ
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Bang: ! != */
+    if c == 33 then
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_BANG_EQ
+        else
+            kind := TK_BANG
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Less than: < <= << <<= */
+    if c == 60 then
+        if lexer_peek(lex) == 60 then
+            lex.pos := lex.pos + 1
+            if lexer_peek(lex) == 61 then
+                lex.pos := lex.pos + 1
+                kind := TK_LT_LT_EQ
+            else
+                kind := TK_LT_LT
+            end
+        elsif lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_LT_EQ
+        else
+            kind := TK_LT
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Greater than: > >= >> >>= */
+    if c == 62 then
+        if lexer_peek(lex) == 62 then
+            lex.pos := lex.pos + 1
+            if lexer_peek(lex) == 61 then
+                lex.pos := lex.pos + 1
+                kind := TK_GT_GT_EQ
+            else
+                kind := TK_GT_GT
+            end
+        elsif lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_GT_EQ
+        else
+            kind := TK_GT
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Plus: + += */
+    if c == 43 then
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_PLUS_EQ
+        else
+            kind := TK_PLUS
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Minus: - -= -> */
+    if c == 45 then
+        if lexer_peek(lex) == 62 then
+            lex.pos := lex.pos + 1
+            kind := TK_ARROW
+        elsif lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_MINUS_EQ
+        else
+            kind := TK_MINUS
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Star: * *= */
+    if c == 42 then
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_STAR_EQ
+        else
+            kind := TK_STAR
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Percent: % %= */
+    if c == 37 then
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_PERCENT_EQ
+        else
+            kind := TK_PERCENT
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Amp: & &= */
+    if c == 38 then
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_AMP_EQ
+        else
+            kind := TK_AMP
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Pipe: | |= */
+    if c == 124 then
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_PIPE_EQ
+        else
+            kind := TK_PIPE
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Caret: ^ ^= */
+    if c == 94 then
+        if lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_CARET_EQ
+        else
+            kind := TK_CARET
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Question: ? ?? */
+    if c == 63 then
+        if lexer_peek(lex) == 63 then
+            lex.pos := lex.pos + 1
+            kind := TK_QUESTION_QUESTION
+        else
+            kind := TK_QUESTION
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Slash: / /= (int-div) (doc-comment) (block-comment) */
+    if c == 47 then
+        if lexer_peek(lex) == 47 then
+            lex.pos := lex.pos + 1
+            if lexer_peek(lex) == 47 then
+                /* Doc comment /// */
+                lex.pos := lex.pos + 1
+                while lex.pos < lex.src_len and src_byte(lex.src, lex.pos) != 10 do
+                    lex.pos := lex.pos + 1
+                end
+                kind := TK_DOC_COMMENT
+            else
+                /* Integer division // */
+                kind := TK_SLASH_SLASH
+            end
+        elsif lexer_peek(lex) == 42 then
+            /* Block comment /* ... */ */
+            lex.pos := lex.pos + 1
+            lexer_eat_block_comment(lex)
+            return lexer_next(lex)  /* tail-recurse past comment */
+        elsif lexer_peek(lex) == 61 then
+            lex.pos := lex.pos + 1
+            kind := TK_SLASH_EQ
+        else
+            kind := TK_SLASH
+        end
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* String literals: " and """ */
+    if c == 34 then
+        lexer_eat_string(lex)
+        return Token { .kind = TK_STRING_LIT, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    /* Number literals */
+    if c >= 48 and c <= 57 then
+        lex.pos := lex.pos - 1
+        var is_float := lexer_scan_number(lex)
+        if is_float then
+            return Token { .kind = TK_FLOAT_LIT, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+        else
+            return Token { .kind = TK_INT_LIT, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+        end
+    end
+
+    /* Identifiers and keywords */
+    var is_alpha := (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
+    if is_alpha then
+        lex.pos := lex.pos - 1
+        var id_start := lex.pos
+        while lex.pos < lex.src_len and is_ident_char(src_byte(lex.src, lex.pos)) do
+            lex.pos := lex.pos + 1
+        end
+        kind := kw_lookup(lex.src, id_start, lex.pos)
+        return Token { .kind = kind, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+    end
+
+    return Token { .kind = TK_INVALID, .start = start, .tok_end = lex.pos, .line = line, .col = col }
+end
+
+/* ── Helpers ─────────────────────────────────────────────────────────────────── */
+
+function lexer_peek(lex: ref Lexer): int32 begin
+    if lex.pos < lex.src_len then
+        return src_byte(lex.src, lex.pos)
+    end
+    return 0
+end
+
+procedure lexer_skip_whitespace(lex: mut Lexer) begin
+    while lex.pos < lex.src_len do
+        var c := src_byte(lex.src, lex.pos)
+        if c == 32 or c == 9 or c == 13 or c == 10 then
+            if c == 10 then
+                lex.line := lex.line + 1
+                lex.line_start := lex.pos + 1
+            end
+            lex.pos := lex.pos + 1
+        elsif c == 47 and lex.pos + 1 < lex.src_len and src_byte(lex.src, lex.pos + 1) == 42 then
+            /* Block comment (c=47='/', next=42='*') */
+            lex.pos := lex.pos + 2
+            lexer_eat_block_comment(lex)
+        else
+            break
+        end
+    end
+end
+
+procedure lexer_eat_block_comment(lex: mut Lexer) begin
+    var depth: int32 := 1
+    while lex.pos < lex.src_len do
+        var c := src_byte(lex.src, lex.pos)
+        lex.pos := lex.pos + 1
+        if c == 10 then
+            lex.line := lex.line + 1
+            lex.line_start := lex.pos
+        end
+        if c == 47 and lex.pos < lex.src_len and src_byte(lex.src, lex.pos) == 42 then
+            lex.pos := lex.pos + 1
+            depth := depth + 1
+        elsif c == 42 and lex.pos < lex.src_len and src_byte(lex.src, lex.pos) == 47 then
+            lex.pos := lex.pos + 1
+            depth := depth - 1
+            if depth == 0 then
+                break
+            end
+        end
+    end
+end
+
+procedure lexer_eat_string(lex: mut Lexer) begin
+    /* Check for triple-quoted string */
+    if lex.pos + 1 < lex.src_len and
+       src_byte(lex.src, lex.pos) == 34 and src_byte(lex.src, lex.pos + 1) == 34 then
+        lex.pos := lex.pos + 2
+        /* Eat until triple-quote (34,34,34) */
+        while lex.pos + 2 < lex.src_len do
+            if src_byte(lex.src, lex.pos)   == 34 and
+               src_byte(lex.src, lex.pos+1) == 34 and
+               src_byte(lex.src, lex.pos+2) == 34 then
+                lex.pos := lex.pos + 3
+                break
+            end
+            if src_byte(lex.src, lex.pos) == 10 then
+                lex.line := lex.line + 1
+                lex.line_start := lex.pos + 1
+            end
+            lex.pos := lex.pos + 1
+        end
+    else
+        /* Single-quoted string */
+        while lex.pos < lex.src_len do
+            var c := src_byte(lex.src, lex.pos)
+            lex.pos := lex.pos + 1
+            if c == 34 then break end
+            if c == 92 then
+                /* Escape sequence */
+                if lex.pos < lex.src_len then
+                    lex.pos := lex.pos + 1
+                end
+            end
+        end
+    end
+end
+
+function lexer_scan_number(lex: mut Lexer): bool begin
+    /* Check prefix */
+    if src_byte(lex.src, lex.pos) == 48 and lex.pos + 1 < lex.src_len then
+        var next := src_byte(lex.src, lex.pos + 1)
+        if next == 120 or next == 88 then
+            /* 0x hex */
+            lex.pos := lex.pos + 2
+            while lex.pos < lex.src_len and is_hex_char(src_byte(lex.src, lex.pos)) do
+                lex.pos := lex.pos + 1
+            end
+            return false
+        end
+        if next == 111 or next == 79 then
+            /* 0o octal */
+            lex.pos := lex.pos + 2
+            while lex.pos < lex.src_len do
+                var c := src_byte(lex.src, lex.pos)
+                if c >= 48 and c <= 55 or c == 95 then
+                    lex.pos := lex.pos + 1
+                else
+                    break
+                end
+            end
+            return false
+        end
+        if next == 98 or next == 66 then
+            /* 0b binary */
+            lex.pos := lex.pos + 2
+            while lex.pos < lex.src_len do
+                var c := src_byte(lex.src, lex.pos)
+                if c == 48 or c == 49 or c == 95 then
+                    lex.pos := lex.pos + 1
+                else
+                    break
+                end
+            end
+            return false
+        end
+    end
+    /* Decimal */
+    while lex.pos < lex.src_len do
+        var c := src_byte(lex.src, lex.pos)
+        if (c >= 48 and c <= 57) or c == 95 then
+            lex.pos := lex.pos + 1
+        else
+            break
+        end
+    end
+    var is_float: bool := false
+    /* Fractional part */
+    if lex.pos < lex.src_len and src_byte(lex.src, lex.pos) == 46 and
+       lex.pos + 1 < lex.src_len and src_byte(lex.src, lex.pos + 1) != 46 then
+        is_float := true
+        lex.pos := lex.pos + 1
+        while lex.pos < lex.src_len and src_byte(lex.src, lex.pos) >= 48 and src_byte(lex.src, lex.pos) <= 57 do
+            lex.pos := lex.pos + 1
+        end
+    end
+    /* Exponent */
+    if lex.pos < lex.src_len then
+        var c := src_byte(lex.src, lex.pos)
+        if c == 101 or c == 69 then
+            is_float := true
+            lex.pos := lex.pos + 1
+            if lex.pos < lex.src_len then
+                var s := src_byte(lex.src, lex.pos)
+                if s == 43 or s == 45 then lex.pos := lex.pos + 1 end
+            end
+            while lex.pos < lex.src_len and src_byte(lex.src, lex.pos) >= 48 and src_byte(lex.src, lex.pos) <= 57 do
+                lex.pos := lex.pos + 1
+            end
+        end
+    end
+    return is_float
+end
+
+function is_ident_char(c: int32): bool begin
+    return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or (c >= 48 and c <= 57) or c == 95
+end
+
+function is_hex_char(c: int32): bool begin
+    return (c >= 48 and c <= 57) or (c >= 65 and c <= 70) or (c >= 97 and c <= 102) or c == 95
+end

@@ -1,0 +1,18 @@
+/// Maia self-hosted compiler — arm64 code generator stub.
+/// Full implementation is deferred; returns empty result for now.
+
+module Codegen_ARM64
+
+use IR
+
+extern function maia_mmap(len: uint64): uint64
+
+type ARM64Result = struct {
+    text_ptr: uint64,
+    text_len: uint32,
+}
+
+function arm64_generate(mod_ptr: uint64): ARM64Result begin
+    mod_ptr
+    return ARM64Result { .text_ptr = maia_mmap(0), .text_len = 0 }
+end

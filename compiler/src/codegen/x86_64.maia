@@ -1,0 +1,787 @@
+/// Maia self-hosted compiler — x86_64 code generator.
+/// Lowers IrModule to native x86_64 machine code.
+/// Targets Linux ELF64, System V AMD64 ABI.
+
+module Codegen_X86_64
+
+use IR
+use Assembler
+
+extern function maia_mmap(len: uint64): uint64
+extern function store32(addr: uint64, v: int32)
+extern function store64(addr: uint64, v: uint64)
+extern function load32(addr: uint64): int32
+extern function load64(addr: uint64): uint64
+extern function load_byte(addr: uint64): int32
+extern function store_byte(addr: uint64, v: int32)
+
+/* ── Register allocator (linear scan, greedy) ────────────────────────────────── */
+/* Maps VReg → physical register or spill slot. */
+
+/* Allocatable registers (caller-saved first) */
+const ALLOC_ORDER_LEN: uint32 = 12
+const ALLOC_R10: int32 = 0
+const ALLOC_R11: int32 = 1
+const ALLOC_RAX: int32 = 2
+const ALLOC_RCX: int32 = 3
+const ALLOC_RDX: int32 = 4
+const ALLOC_RSI: int32 = 5
+const ALLOC_RDI: int32 = 6
+const ALLOC_RBX: int32 = 7
+const ALLOC_R12: int32 = 8
+const ALLOC_R13: int32 = 9
+const ALLOC_R14: int32 = 10
+const ALLOC_R15: int32 = 11
+
+function alloc_phys_reg(idx: int32): int32 begin
+    if idx == 0  then return REG_R10 end
+    if idx == 1  then return REG_R11 end
+    if idx == 2  then return REG_RAX end
+    if idx == 3  then return REG_RCX end
+    if idx == 4  then return REG_RDX end
+    if idx == 5  then return REG_RSI end
+    if idx == 6  then return REG_RDI end
+    if idx == 7  then return REG_RBX end
+    if idx == 8  then return REG_R12 end
+    if idx == 9  then return REG_R13 end
+    if idx == 10 then return REG_R14 end
+    if idx == 11 then return REG_R15 end
+    return REG_RAX
+end
+
+/* RegAlloc: maps vreg → (kind, value) */
+/*   kind=0: register (value = physical reg number) */
+/*   kind=1: spill (value = stack offset from rbp, negative) */
+/* Layout per entry: kind(4), value(4) */
+const RA_ENTRY_BYTES: uint32 = 8
+const RA_MAX_VREGS:   uint32 = 256
+
+type RegAlloc = struct {
+    entries:   uint64,  /* vreg → (kind, phys_or_spill) */
+    used:      uint64,  /* bool[16] — which physical regs are taken */
+    next_spill:int32,  /* grows negative from 0 */
+}
+
+function ra_new(): RegAlloc begin
+    var entries := maia_mmap((RA_MAX_VREGS as uint64) * RA_ENTRY_BYTES as uint64)
+    var i: uint32 := 0
+    while i < RA_MAX_VREGS do
+        store32(entries + (i as uint64) * RA_ENTRY_BYTES as uint64, -1)
+        i := i + 1
+    end
+    /* Build RegAlloc manually via raw stores to avoid struct_lit field access issues */
+    var used := maia_mmap(16)
+    var buf  := maia_mmap(24)  /* RegAlloc struct: entries@0(8), used@8(8), next_spill@16(4) */
+    store64(buf + 0,  entries)
+    store64(buf + 8,  used)
+    store32(buf + 16, 0)   /* next_spill = 0 */
+    return buf as RegAlloc
+end
+
+/* RegAlloc field offsets: entries@0, used@8, next_spill@16 */
+
+procedure ra_assign_param(ra: mut RegAlloc, vreg: uint32, reg: int32) begin
+    var r := ra as uint64
+    var entries := load64(r + 0)
+    var used    := load64(r + 8)
+    var slot := entries + (vreg as uint64) * RA_ENTRY_BYTES as uint64
+    store32(slot,     0)
+    store32(slot + 4, reg)
+    store_byte(used + reg as uint64, 1)
+end
+
+function ra_alloc(ra: mut RegAlloc, vreg: uint32): int32 begin
+    var r := ra as uint64
+    var entries    := load64(r + 0)
+    var used       := load64(r + 8)
+    var next_spill := load32(r + 16)
+    var slot := entries + (vreg as uint64) * RA_ENTRY_BYTES as uint64
+    if load32(slot) >= 0 then
+        return load32(slot + 4)
+    end
+    var i: int32 := 0
+    while i < ALLOC_ORDER_LEN as int32 do
+        var phys := alloc_phys_reg(i)
+        if load_byte(used + phys as uint64) == 0 then
+            store_byte(used + phys as uint64, 1)
+            store32(slot,     0)
+            store32(slot + 4, phys)
+            return phys
+        end
+        i := i + 1
+    end
+    /* Spill: allocate stack slot */
+    var new_spill := next_spill - 8
+    store32(r + 16, new_spill)  /* update next_spill */
+    store32(slot,     1)
+    store32(slot + 4, new_spill)
+    return new_spill
+end
+
+function ra_get(ra: ref RegAlloc, vreg: uint32): int32 begin
+    var entries := load64(ra as uint64 + 0)
+    var slot := entries + (vreg as uint64) * RA_ENTRY_BYTES as uint64
+    if load32(slot) < 0 then return REG_RAX end
+    if load32(slot) == 0 then return load32(slot + 4) end
+    return REG_RAX
+end
+
+function ra_is_spill(ra: ref RegAlloc, vreg: uint32): bool begin
+    var entries := load64(ra as uint64 + 0)
+    var slot := entries + (vreg as uint64) * RA_ENTRY_BYTES as uint64
+    return load32(slot) == 1
+end
+
+function ra_spill_off(ra: ref RegAlloc, vreg: uint32): int32 begin
+    var entries := load64(ra as uint64 + 0)
+    var slot := entries + (vreg as uint64) * RA_ENTRY_BYTES as uint64
+    return load32(slot + 4)
+end
+
+function ra_stack_size(ra: ref RegAlloc): uint32 begin
+    var next_spill := load32(ra as uint64 + 16)
+    var sz := 0 - next_spill
+    return ((sz + 15) / 16 * 16) as uint32
+end
+
+/* ── Codegen result ──────────────────────────────────────────────────────────── */
+
+type CodegenResult = struct {
+    text_ptr:       uint64,
+    text_len:       uint32,
+    rodata_ptr:     uint64,
+    rodata_len:     uint32,
+    /* Symbol table: name_ptr(8), name_len(4), offset(4) triples */
+    syms_ptr:       uint64,
+    sym_count:      uint32,
+    extern_sites:   ExternSites,
+    string_refs:    StringRefs,
+    strings_ptr:    uint64,  /* (str_ptr(8), str_len(4)) from IrModule.string_pool */
+    string_count:   uint32,
+}
+
+/* ── Codegen state ───────────────────────────────────────────────────────────── */
+
+type Codegen = struct {
+    buf:          AsmBuf,
+    rodata:       AsmBuf,
+    labels:       LabelMap,
+    extern_sites: ExternSites,
+    string_refs:  StringRefs,
+    /* Function label registry: name_ptr(8), name_len(4), label_id(4) per entry */
+    fn_labels:    uint64,
+    fn_label_cnt: uint32,
+    next_label:   uint32,
+}
+
+function codegen_new(): Codegen begin
+    return Codegen {
+        .buf          = asmbuf_new(),
+        .rodata       = asmbuf_new(),
+        .labels       = labelmap_new(),
+        .extern_sites = extern_sites_new(),
+        .string_refs  = string_refs_new(),
+        .fn_labels    = maia_mmap(4096),
+        .fn_label_cnt = 0,
+        .next_label   = 0,
+    }
+end
+
+/* Codegen field offsets: buf@0, rodata@8, labels@16, extern_sites@24, string_refs@32, fn_labels@40, fn_label_cnt@48, next_label@52 */
+
+function cg_fresh_label(cg: mut Codegen): uint32 begin
+    var r := cg as uint64
+    var l := load32(r + 52) as uint32  /* next_label @52 */
+    store32(r + 52, (l + 1) as int32)
+    return l
+end
+
+procedure cg_define_label(cg: mut Codegen, id: uint32) begin
+    var r := cg as uint64
+    var lm  := load64(r + 16)  /* labels @16 */
+    var buf := load64(r + 0)   /* buf @0 */
+    var cur := asmbuf_cur(buf)
+    labelmap_define(lm, id, cur)
+end
+
+procedure cg_register_fn_label(cg: mut Codegen, name_ptr: uint64, name_len: uint32, label_id: uint32) begin
+    var r := cg as uint64
+    var fn_labels := load64(r + 40)   /* fn_labels @40 */
+    var fn_cnt    := load32(r + 48) as uint32  /* fn_label_cnt @48 */
+    var slot := fn_labels + (fn_cnt as uint64) * 16
+    store64(slot,      name_ptr)
+    store32(slot + 8,  name_len as int32)
+    store32(slot + 12, label_id as int32)
+    store32(r + 48, (fn_cnt + 1) as int32)
+end
+
+function cg_fn_label(cg: ref Codegen, name_ptr: uint64, name_len: uint32): int32 begin
+    var r := cg as uint64
+    var fn_labels := load64(r + 40)
+    var fn_cnt    := load32(r + 48) as uint32
+    var i: uint32 := 0
+    while i < fn_cnt do
+        var slot := fn_labels + (i as uint64) * 16
+        var np := load64(slot)
+        var nl := load32(slot + 8) as uint32
+        if nl == name_len and strings_equal(np, name_ptr, name_len) then
+            return load32(slot + 12)
+        end
+        i := i + 1
+    end
+    return -1
+end
+
+/* ── Main generation entry point ─────────────────────────────────────────────── */
+
+function codegen_generate(cg: mut Codegen, mod_ptr: uint64): CodegenResult begin
+    /* Use raw ptr for all Codegen field access to avoid spill-interaction issues */
+    var cg_raw    := cg as uint64
+    var cg_rodata := load64(cg_raw + 8)   /* Codegen.rodata @8 */
+
+    /* Build rodata from string pool */
+    var str_pool  := load64(mod_ptr + 24)
+    var str_count := load32(mod_ptr + 32) as uint32
+    var i: uint32 := 0
+    while i < str_count do
+        var slot    := str_pool + (i as uint64) * STR_ENTRY_BYTES as uint64
+        var sp      := load64(slot)
+        var sl      := load32(slot + 8) as uint32
+        /* Emit string bytes + null terminator into rodata */
+        var j: uint32 := 0
+        while j < sl do
+            asmbuf_emit(cg_rodata, load_byte(sp + j as uint64))
+            j := j + 1
+        end
+        asmbuf_emit(cg_rodata, 0)  /* null terminator */
+        i := i + 1
+    end
+
+    /* First pass: assign label IDs to all internal functions */
+    var fn_arr   := load64(mod_ptr)
+    var fn_count := load32(mod_ptr + 8) as uint32
+    i := 0
+    while i < fn_count do
+        var fn_ptr := load64(fn_arr + (i as uint64) * IRFN_PTR_BYTES as uint64)
+        var is_ext := load32(fn_ptr + 52)
+        if is_ext == 0 then
+            var lbl := cg_fresh_label(cg)
+            var np := load64(fn_ptr)
+            var nl := load32(fn_ptr + 8) as uint32
+            cg_register_fn_label(cg, np, nl, lbl)
+        end
+        i := i + 1
+    end
+
+    /* Second pass: generate code */
+    i := 0
+    while i < fn_count do
+        var fn_ptr := load64(fn_arr + (i as uint64) * IRFN_PTR_BYTES as uint64)
+        var is_ext := load32(fn_ptr + 52)
+        if is_ext == 0 then
+            cg_gen_function(cg, fn_ptr, mod_ptr)
+        end
+        i := i + 1
+    end
+
+    /* Resolve label relocations: use raw ptr for Codegen.labels@16 and Codegen.buf@0 */
+    var cg_labels_ptr := load64(cg_raw + 16)  /* Codegen.labels @16 */
+    var cg_buf_ptr    := load64(cg_raw + 0)   /* Codegen.buf @0 */
+    labelmap_resolve_relocs(cg_labels_ptr, cg_buf_ptr)
+
+    /* Build symbol table - use raw ptr for cg fields */
+    var cg_fn_label_cnt := load32(cg_raw + 48) as uint32  /* Codegen.fn_label_cnt @48 */
+    var cg_fn_labels    := load64(cg_raw + 40)             /* Codegen.fn_labels @40 */
+    var syms_ptr := maia_mmap((cg_fn_label_cnt as uint64) * 16)
+    var sym_count: uint32 := 0
+    i := 0
+    while i < cg_fn_label_cnt do
+        var slot := cg_fn_labels + (i as uint64) * 16
+        var np   := load64(slot)
+        var nl   := load32(slot + 8) as uint32
+        var lbl  := load32(slot + 12) as uint32
+        var off  := labelmap_resolve(cg_labels_ptr, lbl)
+        if off != UNDEF_LABEL then
+            var ssym := syms_ptr + (sym_count as uint64) * 16
+            store64(ssym,     np)
+            store32(ssym + 8, nl as int32)
+            store32(ssym + 12, off as int32)
+            sym_count := sym_count + 1
+        end
+        i := i + 1
+    end
+
+    /* Get rodata, extern_sites, string_refs via raw ptr */
+    var cg_ext_sites := load64(cg_raw + 24)  /* Codegen.extern_sites @24 */
+    var cg_str_refs  := load64(cg_raw + 32)  /* Codegen.string_refs @32 */
+    /* buf fields: buf is AsmBuf struct ptr; ptr@0, len@8 within AsmBuf */
+    var cg_buf_data_ptr := load64(cg_buf_ptr + 0)  /* AsmBuf.ptr */
+    var cg_buf_len      := load32(cg_buf_ptr + 8) as uint32  /* AsmBuf.len */
+    var cg_rod_data_ptr := load64(cg_rodata + 0)  /* rodata AsmBuf.ptr */
+    var cg_rod_len      := load32(cg_rodata + 8) as uint32  /* rodata AsmBuf.len */
+
+    return CodegenResult {
+        .text_ptr     = cg_buf_data_ptr,
+        .text_len     = cg_buf_len,
+        .rodata_ptr   = cg_rod_data_ptr,
+        .rodata_len   = cg_rod_len,
+        .syms_ptr     = syms_ptr,
+        .sym_count    = sym_count,
+        .extern_sites = cg_ext_sites,
+        .string_refs  = cg_str_refs,
+        .strings_ptr  = str_pool,
+        .string_count = str_count,
+    }
+end
+
+/* ── Function code generation ────────────────────────────────────────────────── */
+
+procedure cg_gen_function(cg: mut Codegen, fn_ptr: uint64, mod_ptr: uint64) begin
+    var cg_raw := cg as uint64  /* raw Codegen ptr - use for all field access */
+    var cg_buf := load64(cg_raw + 0)   /* Codegen.buf @0 (AsmBuf ptr) */
+    var np := load64(fn_ptr)
+    var nl := load32(fn_ptr + 8) as uint32
+    var lbl_id := cg_fn_label(cg, np, nl)
+    if lbl_id < 0 then return end
+
+    /* Define label at current text offset */
+    cg_define_label(cg, lbl_id as uint32)
+
+    /* Register allocator */
+    var ra := ra_new()
+    var param_count := load32(fn_ptr + 40) as uint32
+    var i: uint32 := 0
+    while i < param_count and i < 6 do
+        ra_assign_param(ra, i, cg_arg_reg(i))
+        i := i + 1
+    end
+
+    /* Pre-allocate all vregs */
+    maia_write(2, "PA\n" as uint64, 3)
+    var block_count := load32(fn_ptr + 24) as uint32
+    maia_write(2, "PA1\n" as uint64, 4)
+    var blocks      := load64(fn_ptr + 16)
+    maia_write(2, "PA2\n" as uint64, 4)
+    i := 0
+    while i < block_count do
+        maia_write(2, "PA3\n" as uint64, 4)
+        var bb_ptr     := blocks + (i as uint64) * BB_STRUCT_BYTES as uint64
+        maia_write(2, "PA4\n" as uint64, 4)
+        var instr_count := load32(bb_ptr + 32) as uint32
+        maia_write(2, "PA5\n" as uint64, 4)
+        var instrs     := load64(bb_ptr + 24)
+        maia_write(2, "PA6\n" as uint64, 4)
+        var j: uint32 := 0
+        while j < instr_count do
+            maia_write(2, "PA7\n" as uint64, 4)
+            var instr := instrs + (j as uint64) * INSTR_BYTES as uint64
+            cg_preallloc(ra, instr)
+            maia_write(2, "PA8\n" as uint64, 4)
+            j := j + 1
+        end
+        i := i + 1
+    end
+    maia_write(2, "PA9\n" as uint64, 4)
+
+    /* Prologue */
+    var stack_sz := ra_stack_size(ra) + 8
+    var aligned_sz := (stack_sz + 15) / 16 * 16
+    emit_push_r(cg_buf, REG_RBP)
+    emit_mov_rr(cg_buf, REG_RBP, REG_RSP)
+    if aligned_sz > 0 then
+        emit_sub_ri8(cg_buf, REG_RSP, aligned_sz as int32)
+    end
+
+    /* Assign block labels */
+    var block_labels := maia_mmap((block_count as uint64) * 4)
+    i := 0
+    while i < block_count do
+        var bl := cg_fresh_label(cg)
+        store32(block_labels + (i as uint64) * 4, bl as int32)
+        i := i + 1
+    end
+
+    /* Generate each basic block */
+    i := 0
+    while i < block_count do
+        var bb_ptr     := blocks + (i as uint64) * BB_STRUCT_BYTES as uint64
+        var bl         := load32(block_labels + (i as uint64) * 4) as uint32
+        cg_define_label(cg, bl)
+        var instr_count := load32(bb_ptr + 32) as uint32
+        var instrs      := load64(bb_ptr + 24)
+        var j: uint32 := 0
+        while j < instr_count do
+            var instr := instrs + (j as uint64) * INSTR_BYTES as uint64
+            cg_gen_instr(cg, instr, ra, block_labels, mod_ptr)
+            j := j + 1
+        end
+        i := i + 1
+    end
+end
+
+procedure cg_preallloc(ra: mut RegAlloc, instr: uint64) begin
+    var kind := load32(instr)
+    var dst  := load32(instr + 4) as uint32
+    if kind == INSTR_BINOP or kind == INSTR_UNOP or kind == INSTR_COPY or
+       kind == INSTR_CAST  or kind == INSTR_CALL or kind == INSTR_ADDR_OF or
+       kind == INSTR_LOAD  or kind == INSTR_ALLOCA or
+       kind == INSTR_INDEX_GET or kind == INSTR_FIELD_GET then
+    ra_alloc(ra, dst)
+    end
+end
+
+function cg_arg_reg(idx: uint32): int32 begin
+    if idx == 0 then return REG_RDI end
+    if idx == 1 then return REG_RSI end
+    if idx == 2 then return REG_RDX end
+    if idx == 3 then return REG_RCX end
+    if idx == 4 then return REG_R8 end
+    return REG_R9
+end
+
+procedure cg_gen_instr(cg: mut Codegen, instr: uint64, ra: mut RegAlloc,
+                        block_labels: uint64, mod_ptr: uint64) begin
+    var scg := cg
+    var sra := ra
+    var kind := load32(instr)
+
+    if kind == INSTR_NOP then
+        emit_nop(scg.buf)
+        return
+    end
+
+    if kind == INSTR_COPY then
+        var dst_v := load32(instr + 4) as uint32
+        var src   := load64(instr + 8)
+        var dst_r := ra_get(sra, dst_v)
+        cg_load_value(scg, src, dst_r, sra)
+        return
+    end
+
+    if kind == INSTR_BINOP then
+        var dst_v := load32(instr + 4) as uint32
+        var ty    := load32(instr + 8)
+        var op    := load32(instr + 12)
+        var lhs_v := load64(instr + 16)
+        var rhs_v := load64(instr + 24)
+        var dst_r := ra_get(sra, dst_v)
+        var tmp   := REG_R11
+        cg_load_value(scg, lhs_v, dst_r, sra)
+        cg_load_value(scg, rhs_v, tmp, sra)
+    ty
+        if op == IR_ADD then emit_add_rr(scg.buf, dst_r, tmp) end
+        if op == IR_SUB then emit_sub_rr(scg.buf, dst_r, tmp) end
+        if op == IR_MUL then emit_imul_rr(scg.buf, dst_r, tmp) end
+        if op == IR_DIV or op == IR_INT_DIV then
+            emit_mov_rr(scg.buf, REG_RAX, dst_r)
+            emit_xor_rr(scg.buf, REG_RDX, REG_RDX)
+            emit_idiv_r(scg.buf, tmp)
+            emit_mov_rr(scg.buf, dst_r, REG_RAX)
+        end
+        if op == IR_MOD then
+            emit_mov_rr(scg.buf, REG_RAX, dst_r)
+            emit_xor_rr(scg.buf, REG_RDX, REG_RDX)
+            emit_idiv_r(scg.buf, tmp)
+            emit_mov_rr(scg.buf, dst_r, REG_RDX)
+        end
+        if op == IR_EQ then
+            emit_cmp_rr(scg.buf, dst_r, tmp)
+            emit_xor_rr(scg.buf, dst_r, dst_r)
+            emit_sete(scg.buf)
+            emit_movzx_ral(scg.buf, dst_r)
+        end
+        if op == IR_NE then
+            emit_cmp_rr(scg.buf, dst_r, tmp)
+            emit_xor_rr(scg.buf, dst_r, dst_r)
+            emit_setne(scg.buf)
+            emit_movzx_ral(scg.buf, dst_r)
+        end
+        if op == IR_LT then
+            emit_cmp_rr(scg.buf, dst_r, tmp)
+            emit_xor_rr(scg.buf, dst_r, dst_r)
+            emit_setl(scg.buf)
+            emit_movzx_ral(scg.buf, dst_r)
+        end
+        if op == IR_GT then
+            emit_cmp_rr(scg.buf, dst_r, tmp)
+            emit_xor_rr(scg.buf, dst_r, dst_r)
+            emit_setg(scg.buf)
+            emit_movzx_ral(scg.buf, dst_r)
+        end
+        if op == IR_LE then
+            emit_cmp_rr(scg.buf, dst_r, tmp)
+            emit_xor_rr(scg.buf, dst_r, dst_r)
+            emit_setle(scg.buf)
+            emit_movzx_ral(scg.buf, dst_r)
+        end
+        if op == IR_GE then
+            emit_cmp_rr(scg.buf, dst_r, tmp)
+            emit_xor_rr(scg.buf, dst_r, dst_r)
+            emit_setge(scg.buf)
+            emit_movzx_ral(scg.buf, dst_r)
+        end
+        if op == IR_AND then emit_and_rr(scg.buf, dst_r, tmp) end
+        if op == IR_OR  then emit_or_rr(scg.buf, dst_r, tmp) end
+        if op == IR_XOR then emit_xor_rr(scg.buf, dst_r, tmp) end
+        if op == IR_SHL then
+            emit_mov_rr(scg.buf, REG_RCX, tmp)
+            emit_shl_rcl(scg.buf, dst_r)
+        end
+        if op == IR_SHR then
+            emit_mov_rr(scg.buf, REG_RCX, tmp)
+            emit_shr_rcl(scg.buf, dst_r)
+        end
+        return
+    end
+
+    if kind == INSTR_UNOP then
+        var dst_v := load32(instr + 4) as uint32
+        var op    := load32(instr + 12)
+        var src_v := load64(instr + 16)
+        var dst_r := ra_get(sra, dst_v)
+        cg_load_value(scg, src_v, dst_r, sra)
+        if op == IR_NEG     then emit_neg_r(scg.buf, dst_r) end
+        if op == IR_BIT_NOT then emit_not_r(scg.buf, dst_r) end
+        if op == IR_NOT then
+            emit_test_rr(scg.buf, dst_r, dst_r)
+            emit_xor_rr(scg.buf, dst_r, dst_r)
+            emit_sete(scg.buf)
+            emit_movzx_ral(scg.buf, dst_r)
+        end
+        return
+    end
+
+    if kind == INSTR_CALL then
+        var dst_v     := load32(instr + 4) as uint32
+        var callee_v  := load64(instr + 16)
+        var args_ptr  := load64(instr + 24)
+        var arg_count := load32(instr + 32) as uint32
+        var dst_r     := ra_get(sra, dst_v)
+        var i: uint32 := 0
+        while i < arg_count and i < 6 do
+            var av := load64(args_ptr + (i as uint64) * 8)
+            cg_load_value(scg, av, cg_arg_reg(i), sra)
+            i := i + 1
+        end
+        var ck := val_kind(callee_v)
+        if ck == VAL_GLOBAL then
+            var name_ptr := val_global_ptr(callee_v)
+            var name_len := val_global_len(callee_v)
+            var lbl := cg_fn_label(scg, name_ptr, name_len)
+            if lbl >= 0 then
+                /* Internal call: emit E8 + rel32 placeholder; add reloc */
+                asmbuf_emit(scg.buf, 0xE8)
+                var imm_off := asmbuf_cur(scg.buf)
+                asmbuf_emit_i32(scg.buf, 0)
+                labelmap_add_reloc(scg.labels, imm_off, lbl as uint32)
+            else
+                /* External call: mov r11, imm32; call r11 (address patched by linker) */
+                var imm_off2 := asmbuf_cur(scg.buf) + 2  /* after REX + B8 */
+                emit_mov_ri32(scg.buf, REG_R11, 0)
+                emit_call_r(scg.buf, REG_R11)
+                extern_sites_add(scg.extern_sites, imm_off2, name_ptr, name_len)
+            end
+        elsif ck == VAL_VREG then
+            var vr := val_vreg_id(callee_v)
+            var cr := ra_get(sra, vr)
+            emit_call_r(scg.buf, cr)
+        else
+            emit_call_r(scg.buf, REG_R11)
+        end
+        /* Return value is in RAX; move to dst */
+        emit_mov_rr(scg.buf, dst_r, REG_RAX)
+        return
+    end
+
+    if kind == INSTR_RET then
+        var val_ptr := load64(instr + 8)
+        if val_ptr != 0 then
+            cg_load_value(scg, val_ptr, REG_RAX, sra)
+        else
+            emit_xor_rr(scg.buf, REG_RAX, REG_RAX)
+        end
+        emit_mov_rr(scg.buf, REG_RSP, REG_RBP)
+        emit_pop_r(scg.buf, REG_RBP)
+        emit_ret(scg.buf)
+        return
+    end
+
+    if kind == INSTR_JUMP then
+        var target := load32(instr + 4) as uint32
+        var target_lbl := load32(block_labels + (target as uint64) * 4) as uint32
+        var imm_off := emit_jmp_rel32(scg.buf)
+        labelmap_add_reloc(scg.labels, imm_off, target_lbl)
+        return
+    end
+
+    if kind == INSTR_BRANCH then
+        var cond_v      := load64(instr + 8)
+        var true_block  := load32(instr + 16) as uint32
+        var false_block := load32(instr + 20) as uint32
+        cg_load_value(scg, cond_v, REG_RAX, sra)
+        emit_test_rr(scg.buf, REG_RAX, REG_RAX)
+        var true_lbl  := load32(block_labels + (true_block as uint64) * 4) as uint32
+        var false_lbl := load32(block_labels + (false_block as uint64) * 4) as uint32
+        var jne_imm := emit_jne_rel32(scg.buf)
+        labelmap_add_reloc(scg.labels, jne_imm, true_lbl)
+        var jmp_imm := emit_jmp_rel32(scg.buf)
+        labelmap_add_reloc(scg.labels, jmp_imm, false_lbl)
+        return
+    end
+
+    if kind == INSTR_ALLOCA then
+        var dst_v := load32(instr + 4) as uint32
+        var dst_r := ra_get(sra, dst_v)
+        if ra_is_spill(sra, dst_v) then
+            var off := ra_spill_off(sra, dst_v)
+            emit_lea_rbp_disp8(scg.buf, dst_r, off)
+        else
+            emit_sub_ri8(scg.buf, REG_RSP, 8)
+            emit_mov_rr(scg.buf, dst_r, REG_RSP)
+        end
+        return
+    end
+
+    if kind == INSTR_LOAD then
+        var dst_v  := load32(instr + 4) as uint32
+        var addr_v := load64(instr + 8)
+        var dst_r  := ra_get(sra, dst_v)
+        if val_kind(addr_v) == VAL_VREG then
+            var base_r := ra_get(sra, val_vreg_id(addr_v))
+            emit_mov_rm(scg.buf, dst_r, base_r)
+        else
+            cg_load_value(scg, addr_v, REG_R10, sra)
+            emit_mov_rm(scg.buf, dst_r, REG_R10)
+        end
+        return
+    end
+
+    if kind == INSTR_STORE then
+        var addr_v := load64(instr + 8)
+        var src_v  := load64(instr + 16)
+        cg_load_value(scg, src_v, REG_R10, sra)
+        if val_kind(addr_v) == VAL_VREG then
+            var base_r := ra_get(sra, val_vreg_id(addr_v))
+            emit_mov_mr(scg.buf, base_r, REG_R10)
+        end
+        return
+    end
+
+    if kind == INSTR_INDEX_GET then
+        var dst_v := load32(instr + 4) as uint32
+        var arr_v := load64(instr + 16)
+        var idx_v := load64(instr + 24)
+        var dst_r := ra_get(sra, dst_v)
+        cg_load_value(scg, arr_v, REG_R10, sra)
+        cg_load_value(scg, idx_v, REG_R11, sra)
+        emit_mov_rm_sib8(scg.buf, dst_r, REG_R10, REG_R11)
+        return
+    end
+
+    if kind == INSTR_INDEX_SET then
+        var arr_v := load64(instr + 16)
+        var idx_v := load64(instr + 24)
+        var src_v := load64(instr + 32)
+        cg_load_value(scg, arr_v, REG_R10, sra)
+        cg_load_value(scg, idx_v, REG_R11, sra)
+        cg_load_value(scg, src_v, REG_R9, sra)
+        emit_mov_mr_sib8(scg.buf, REG_R10, REG_R11, REG_R9)
+        return
+    end
+
+    if kind == INSTR_FIELD_GET then
+        var dst_v  := load32(instr + 4) as uint32
+        var obj_v  := load64(instr + 16)
+        var dst_r  := ra_get(sra, dst_v)
+        cg_load_value(scg, obj_v, dst_r, sra)
+        /* Simplified: load from offset 0 (field offset tracking not yet implemented) */
+        emit_mov_rm(scg.buf, dst_r, dst_r)
+        return
+    end
+
+    if kind == INSTR_CAST then
+        var dst_v := load32(instr + 4) as uint32
+        var src_v := load64(instr + 16)
+        var dst_r := ra_get(sra, dst_v)
+        cg_load_value(scg, src_v, dst_r, sra)
+        /* Integer widening/truncation: just copy for now */
+        return
+    end
+
+    if kind == INSTR_ADDR_OF then
+        var dst_v  := load32(instr + 4) as uint32
+        var src_vr := load32(instr + 8) as uint32
+        var dst_r  := ra_get(sra, dst_v)
+        if ra_is_spill(sra, src_vr) then
+            emit_lea_rbp_disp8(scg.buf, dst_r, ra_spill_off(sra, src_vr))
+        else
+            emit_push_r(scg.buf, ra_get(sra, src_vr))
+            emit_mov_rr(scg.buf, dst_r, REG_RSP)
+        end
+        return
+    end
+end
+
+/* Load an IR Value into a physical register. */
+procedure cg_load_value(cg: mut Codegen, val_ptr: uint64, dst: int32, ra: mut RegAlloc) begin
+    var scg := cg
+    var sdst := dst
+    var sra  := ra
+    var kind := val_kind(val_ptr)
+
+    if kind == VAL_IMM_INT then
+        var v := val_imm_int_val(val_ptr)
+        if v == 0 then
+            emit_xor_rr(scg.buf, sdst, sdst)
+        else
+            emit_mov_ri64(scg.buf, sdst, v)
+        end
+        return
+    end
+
+    if kind == VAL_IMM_BOOL then
+        var b := load32(val_ptr + 4)
+        emit_mov_ri32(scg.buf, sdst, b)
+        return
+    end
+
+    if kind == VAL_IMM_NULL then
+        emit_xor_rr(scg.buf, sdst, sdst)
+        return
+    end
+
+    if kind == VAL_STRING_CONST then
+        var idx := load32(val_ptr + 4) as uint32
+        /* Rodata offset: for idx=0 it's 0; for idx>0 we'd need the string pool */
+        /* Emit mov_ri with placeholder; linker will patch to rodata_vaddr + rodata_off */
+        var imm_off := asmbuf_cur(scg.buf) + if sdst >= 8 then 2 else 1 end
+        emit_mov_ri32(scg.buf, sdst, 0)
+        string_refs_add(scg.string_refs, imm_off, idx)
+        return
+    end
+
+    if kind == VAL_GLOBAL then
+        /* Load address of global/extern function (load 0 as placeholder) */
+        emit_mov_ri32(scg.buf, sdst, 0)
+        return
+    end
+
+    if kind == VAL_VREG then
+        /* Copy source vreg's physical register to dst */
+        var vr := val_vreg_id(val_ptr)
+        var src_r := ra_get(sra, vr)
+        if src_r != sdst then
+            emit_mov_rr(scg.buf, sdst, src_r)
+        end
+        return
+    end
+end
+
+/* Compute strlen of a null-terminated pointer */
+function cg_strlen(ptr: uint64): uint32 begin
+    var i: uint32 := 0
+    while load_byte(ptr + i as uint64) != 0 do
+        i := i + 1
+    end
+    return i
+end

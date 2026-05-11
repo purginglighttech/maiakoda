@@ -1,0 +1,31 @@
+/// Maia self-hosted compiler — wasm32 code generator stub.
+/// Emits the 8-byte WebAssembly magic + version header only.
+
+module Codegen_WASM32
+
+use IR
+use Assembler
+
+extern function maia_mmap(len: uint64): uint64
+extern function store_byte(addr: uint64, v: int32)
+
+type WASM32Result = struct {
+    wasm_ptr: uint64,
+    wasm_len: uint32,
+}
+
+function wasm32_generate(mod_ptr: uint64): WASM32Result begin
+    mod_ptr
+    var buf := maia_mmap(8)
+    /* Magic: \0asm */
+    store_byte(buf,     0x00)
+    store_byte(buf + 1, 0x61)
+    store_byte(buf + 2, 0x73)
+    store_byte(buf + 3, 0x6D)
+    /* Version: 1 */
+    store_byte(buf + 4, 0x01)
+    store_byte(buf + 5, 0x00)
+    store_byte(buf + 6, 0x00)
+    store_byte(buf + 7, 0x00)
+    return WASM32Result { .wasm_ptr = buf, .wasm_len = 8 }
+end

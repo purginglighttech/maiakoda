@@ -1,0 +1,560 @@
+/// Maia self-hosted compiler — semantic analyzer.
+/// Performs name resolution, type inference, and type checking.
+
+module Sema
+
+use AST
+
+extern function maia_mmap(len: uint64): uint64
+extern function store32(addr: uint64, v: int32)
+extern function store64(addr: uint64, v: uint64)
+extern function load32(addr: uint64): int32
+extern function load64(addr: uint64): uint64
+
+/* ── Type IDs ────────────────────────────────────────────────────────────────── */
+
+const TYPE_VOID:   int32 = 0
+const TYPE_BOOL:   int32 = 1
+const TYPE_INT8:   int32 = 2
+const TYPE_INT16:  int32 = 3
+const TYPE_INT32:  int32 = 4
+const TYPE_INT64:  int32 = 5
+const TYPE_UINT8:  int32 = 6
+const TYPE_UINT16: int32 = 7
+const TYPE_UINT32: int32 = 8
+const TYPE_UINT64: int32 = 9
+const TYPE_F32:    int32 = 10
+const TYPE_F64:    int32 = 11
+const TYPE_STRING: int32 = 12
+const TYPE_USIZE:  int32 = 13
+const TYPE_ISIZE:  int32 = 14
+const TYPE_NULL:   int32 = 15
+const TYPE_FIRST_USER: int32 = 16
+
+/* ── Symbol kinds ────────────────────────────────────────────────────────────── */
+
+const SYM_VAR:      int32 = 0
+const SYM_CONST:    int32 = 1
+const SYM_FUNCTION: int32 = 2
+const SYM_PROC:     int32 = 3
+const SYM_TYPE:     int32 = 4
+const SYM_MODULE:   int32 = 5
+
+/* ── Symbol entry (stored in hash table) ────────────────────────────────────── */
+/* Layout: name_ptr(8), name_len(4), kind(4), type_id(4), is_mutable(4), */
+/*         ownership(4), _pad(4) = 32 bytes */
+
+const SYMBOL_BYTES: uint32 = 32
+
+/* ── Simple open-addressing hash table for symbols ───────────────────────────── */
+
+type SymbolTable = struct {
+    buckets: uint64,  /* ptr to Symbol[cap] */
+    cap:     uint32,
+    count:   uint32,
+    parent:  uint64,  /* ptr to parent SymbolTable (0 = global) */
+}
+
+function symtab_new(parent: uint64): SymbolTable begin
+    const CAP: uint32 = 64
+    var buckets := maia_mmap((CAP as uint64) * SYMBOL_BYTES as uint64)
+    return SymbolTable { .buckets = buckets, .cap = CAP, .count = 0, .parent = parent }
+end
+
+/* FNV-1a hash for a name slice */
+function name_hash(name_ptr: uint64, name_len: uint32): uint32 begin
+    var h: uint32 := 2166136261
+    var i: uint32 := 0
+    while i < name_len do
+        var b := load_byte(name_ptr + i as uint64)
+        h := h ^ b as uint32
+        h := h * 16777619
+        i := i + 1
+    end
+    return h
+end
+
+extern function load_byte(addr: uint64): int32
+
+function names_equal(a_ptr: uint64, a_len: uint32, b_ptr: uint64, b_len: uint32): bool begin
+    if a_len != b_len then return false end
+    var i: uint32 := 0
+    while i < a_len do
+        if load_byte(a_ptr + i as uint64) != load_byte(b_ptr + i as uint64) then
+            return false
+        end
+        i := i + 1
+    end
+    return true
+end
+
+procedure symtab_define(tab: mut SymbolTable, name_ptr: uint64, name_len: uint32,
+                          kind: int32, type_id: int32, is_mutable: int32, ownership: int32) begin
+    var h := name_hash(name_ptr, name_len) % tab.cap
+    var i := h
+    loop
+        var slot := tab.buckets + (i as uint64) * SYMBOL_BYTES as uint64
+        var existing_len := load32(slot + 8)
+        if existing_len == 0 then
+            /* Empty slot — write here */
+            store64(slot,     name_ptr)
+            store32(slot + 8,  name_len as int32)
+            store32(slot + 12, kind)
+            store32(slot + 16, type_id)
+            store32(slot + 20, is_mutable)
+            store32(slot + 24, ownership)
+            tab.count := tab.count + 1
+            break
+        end
+        i := (i + 1) % tab.cap
+        if i == h then break end  /* table full (shouldn't happen with our capacities) */
+    end
+end
+
+function symtab_lookup(tab: ref SymbolTable, name_ptr: uint64, name_len: uint32): uint64 begin
+    /* Returns pointer to symbol slot, or 0 if not found */
+    var h := name_hash(name_ptr, name_len) % tab.cap
+    var i := h
+    loop
+        var slot := tab.buckets + (i as uint64) * SYMBOL_BYTES as uint64
+        var slen := load32(slot + 8)
+        if slen == 0 then
+            break  /* not found in this scope */
+        end
+        var sptr := load64(slot)
+        if names_equal(name_ptr, name_len, sptr, slen as uint32) then
+            return slot
+        end
+        i := (i + 1) % tab.cap
+        if i == h then break end
+    end
+    /* Check parent scope */
+    if tab.parent != 0 then
+        var parent_tab: SymbolTable := load_symtab(tab.parent)
+        return symtab_lookup(parent_tab, name_ptr, name_len)
+    end
+    return 0
+end
+
+/* Load a SymbolTable from a pointer */
+function load_symtab(ptr: uint64): SymbolTable begin
+    return SymbolTable {
+        .buckets = load64(ptr),
+        .cap     = load32(ptr + 8)  as uint32,
+        .count   = load32(ptr + 12) as uint32,
+        .parent  = load64(ptr + 16),
+    }
+end
+
+/* ── Type registry ───────────────────────────────────────────────────────────── */
+
+type TypeRegistry = struct {
+    types:   uint64,  /* flat buffer of type descriptors */
+    count:   int32,
+}
+
+/* Type descriptor layout (32 bytes): */
+/*   kind(4), bits(4), signed(4), is_ptr(4), inner_ty(4), _pad[12] */
+const TYPE_DESC_BYTES: uint32 = 32
+
+function typereg_new(): TypeRegistry begin
+    var types := maia_mmap(16384)  /* room for 512 type descriptors */
+    return TypeRegistry { .types = types, .count = 0 }
+end
+
+/* ── Sema context ────────────────────────────────────────────────────────────── */
+
+type Sema = struct {
+    global:    SymbolTable,
+    current:   uint64,  /* ptr to current SymbolTable (stored in arena) */
+    types:     TypeRegistry,
+    diags:     uint64,  /* ptr to diagnostic buffer */
+    diag_count:int32,
+    src:       uint64,
+    src_len:   uint32,
+    ret_ty:    int32,  /* current function return type */
+}
+
+function sema_new(src: uint64, src_len: uint32): Sema begin
+    var global := symtab_new(0)
+    var types  := typereg_new()
+
+    /* Register built-in type names in global scope */
+    /* (we use string literal pointers from our own source for names) */
+    /* Abbreviated: just record the type IDs by well-known names. */
+    /* Full name resolution via keyword comparison in sema_resolve_type. */
+
+    return Sema {
+        .global     = global,
+        .current    = 0,
+        .types      = types,
+        .diags      = maia_mmap(65536),
+        .diag_count = 0,
+        .src        = src,
+        .src_len    = src_len,
+        .ret_ty     = TYPE_VOID,
+    }
+end
+
+/* Resolve a type name (given as src offset + length) to a TypeId. */
+function sema_resolve_named_type(src: uint64, name_start: uint32, name_len: uint32): int32 begin
+    /* Compare name against known primitive type names. */
+    var c0 := load_byte(src + name_start as uint64)
+    if name_len == 4 then
+        /* "void" = 118 111 105 100 */
+        if c0 == 118 and load_byte(src + name_start as uint64 + 1) == 111 and
+           load_byte(src + name_start as uint64 + 2) == 105 and
+           load_byte(src + name_start as uint64 + 3) == 100 then
+            return TYPE_VOID
+        end
+        /* "bool" = 98 111 111 108 */
+        if c0 == 98 and load_byte(src + name_start as uint64 + 1) == 111 and
+           load_byte(src + name_start as uint64 + 2) == 111 and
+           load_byte(src + name_start as uint64 + 3) == 108 then
+            return TYPE_BOOL
+        end
+        /* "int8" = 105 110 116 56 */
+        if c0 == 105 and load_byte(src + name_start as uint64 + 1) == 110 and
+           load_byte(src + name_start as uint64 + 2) == 116 and
+           load_byte(src + name_start as uint64 + 3) == 56 then
+            return TYPE_INT8
+        end
+        /* "int8 " handled above; "f32 " = 102 51 50 (3 chars actually) */
+    end
+    if name_len == 3 then
+        /* "f32" = 102 51 50 */
+        if c0 == 102 and load_byte(src + name_start as uint64 + 1) == 51 and
+           load_byte(src + name_start as uint64 + 2) == 50 then
+            return TYPE_F32
+        end
+        /* "f64" = 102 54 52 */
+        if c0 == 102 and load_byte(src + name_start as uint64 + 1) == 54 and
+           load_byte(src + name_start as uint64 + 2) == 52 then
+            return TYPE_F64
+        end
+        /* "u8 " = 117 56 (2 chars) */
+    end
+    if name_len == 2 then
+        /* "u8" = 117 56 */
+        if c0 == 117 and load_byte(src + name_start as uint64 + 1) == 56 then
+            return TYPE_UINT8
+        end
+    end
+    if name_len == 5 then
+        /* "int16" = 105 110 116 49 54 */
+        if c0 == 105 and load_byte(src + name_start as uint64 + 1) == 110 and
+           load_byte(src + name_start as uint64 + 2) == 116 and
+           load_byte(src + name_start as uint64 + 3) == 49 and
+           load_byte(src + name_start as uint64 + 4) == 54 then
+            return TYPE_INT16
+        end
+        /* "int32" = 105 110 116 51 50 */
+        if c0 == 105 and load_byte(src + name_start as uint64 + 1) == 110 and
+           load_byte(src + name_start as uint64 + 2) == 116 and
+           load_byte(src + name_start as uint64 + 3) == 51 and
+           load_byte(src + name_start as uint64 + 4) == 50 then
+            return TYPE_INT32
+        end
+        /* "int64" = 105 110 116 54 52 */
+        if c0 == 105 and load_byte(src + name_start as uint64 + 1) == 110 and
+           load_byte(src + name_start as uint64 + 2) == 116 and
+           load_byte(src + name_start as uint64 + 3) == 54 and
+           load_byte(src + name_start as uint64 + 4) == 52 then
+            return TYPE_INT64
+        end
+        /* "usize" = 117 115 105 122 101 */
+        if c0 == 117 and load_byte(src + name_start as uint64 + 1) == 115 and
+           load_byte(src + name_start as uint64 + 2) == 105 and
+           load_byte(src + name_start as uint64 + 3) == 122 and
+           load_byte(src + name_start as uint64 + 4) == 101 then
+            return TYPE_USIZE
+        end
+        /* "isize" = 105 115 105 122 101 */
+        if c0 == 105 and load_byte(src + name_start as uint64 + 1) == 115 and
+           load_byte(src + name_start as uint64 + 2) == 105 and
+           load_byte(src + name_start as uint64 + 3) == 122 and
+           load_byte(src + name_start as uint64 + 4) == 101 then
+            return TYPE_ISIZE
+        end
+    end
+    if name_len == 6 then
+        /* "uint32" = 117 105 110 116 51 50 */
+        if c0 == 117 and load_byte(src + name_start as uint64 + 1) == 105 and
+           load_byte(src + name_start as uint64 + 2) == 110 and
+           load_byte(src + name_start as uint64 + 3) == 116 and
+           load_byte(src + name_start as uint64 + 4) == 51 and
+           load_byte(src + name_start as uint64 + 5) == 50 then
+            return TYPE_UINT32
+        end
+        /* "uint64" = 117 105 110 116 54 52 */
+        if c0 == 117 and load_byte(src + name_start as uint64 + 1) == 105 and
+           load_byte(src + name_start as uint64 + 2) == 110 and
+           load_byte(src + name_start as uint64 + 3) == 116 and
+           load_byte(src + name_start as uint64 + 4) == 54 and
+           load_byte(src + name_start as uint64 + 5) == 52 then
+            return TYPE_UINT64
+        end
+        /* "string" = 115 116 114 105 110 103 */
+        if c0 == 115 and load_byte(src + name_start as uint64 + 1) == 116 and
+           load_byte(src + name_start as uint64 + 2) == 114 and
+           load_byte(src + name_start as uint64 + 3) == 105 and
+           load_byte(src + name_start as uint64 + 4) == 110 and
+           load_byte(src + name_start as uint64 + 5) == 103 then
+            return TYPE_STRING
+        end
+        /* "uint16" = 117 105 110 116 49 54 */
+        if c0 == 117 and load_byte(src + name_start as uint64 + 1) == 105 and
+           load_byte(src + name_start as uint64 + 2) == 110 and
+           load_byte(src + name_start as uint64 + 3) == 116 and
+           load_byte(src + name_start as uint64 + 4) == 49 and
+           load_byte(src + name_start as uint64 + 5) == 54 then
+            return TYPE_UINT16
+        end
+        /* "uint8 " = 117 105 110 116 56 (5 chars — oops, already handled above for 5-char check) */
+    end
+    if name_len == 5 then
+        /* "uint8" = 117 105 110 116 56 */
+        if c0 == 117 and load_byte(src + name_start as uint64 + 1) == 105 and
+           load_byte(src + name_start as uint64 + 2) == 110 and
+           load_byte(src + name_start as uint64 + 3) == 116 and
+           load_byte(src + name_start as uint64 + 4) == 56 then
+            return TYPE_UINT8
+        end
+    end
+    /* Unknown type: return TYPE_FIRST_USER as a placeholder */
+    return TYPE_FIRST_USER
+end
+
+/* Analyze an entire module (first pass: register, second pass: check). */
+procedure sema_analyze_module(s: mut Sema, mod: ref Module) begin
+    /* First pass: register top-level declarations */
+    var i: uint32 := 0
+    while i < mod.decl_count do
+        var d := load64(mod.decls + (i as uint64) * 8)
+        sema_register_decl(s, d)
+        i := i + 1
+    end
+    /* Second pass: check bodies */
+    i := 0
+    while i < mod.decl_count do
+        var d := load64(mod.decls + (i as uint64) * 8)
+        sema_check_decl(s, d)
+        i := i + 1
+    end
+end
+
+procedure sema_register_decl(s: mut Sema, decl: uint64) begin
+    var kind := node_kind(decl)
+    if kind == DECL_FUNC then
+        var name_start := load32(decl + NODE_HDR_BYTES) as uint32
+        var name_len   := load32(decl + NODE_HDR_BYTES + 4) as uint32
+        var name_ptr   := s.src + name_start as uint64
+        symtab_define(s.global, name_ptr, name_len, SYM_FUNCTION, TYPE_VOID, 0, OWN_NONE)
+    end
+    if kind == DECL_PROC then
+        var name_start := load32(decl + NODE_HDR_BYTES) as uint32
+        var name_len   := load32(decl + NODE_HDR_BYTES + 4) as uint32
+        var name_ptr   := s.src + name_start as uint64
+        symtab_define(s.global, name_ptr, name_len, SYM_PROC, TYPE_VOID, 0, OWN_NONE)
+    end
+    if kind == DECL_TYPE then
+        var name_start := load32(decl + NODE_HDR_BYTES) as uint32
+        var name_len   := load32(decl + NODE_HDR_BYTES + 4) as uint32
+        var name_ptr   := s.src + name_start as uint64
+        symtab_define(s.global, name_ptr, name_len, SYM_TYPE, TYPE_FIRST_USER, 0, OWN_NONE)
+    end
+    if kind == DECL_CONST then
+        var name_start := load32(decl + NODE_HDR_BYTES) as uint32
+        var name_len   := load32(decl + NODE_HDR_BYTES + 4) as uint32
+        var name_ptr   := s.src + name_start as uint64
+        symtab_define(s.global, name_ptr, name_len, SYM_CONST, TYPE_INT32, 0, OWN_NONE)
+    end
+    if kind == DECL_EXTERN then
+        var inner := load64(decl + NODE_HDR_BYTES)
+        if inner != 0 then
+            sema_register_decl(s, inner)
+        end
+    end
+end
+
+procedure sema_check_decl(s: mut Sema, decl: uint64) begin
+    var kind := node_kind(decl)
+    if kind == DECL_FUNC then
+        var body := load64(decl + NODE_HDR_BYTES + 32)
+        var ret_node := load64(decl + NODE_HDR_BYTES + 24)
+        var prev_ret := s.ret_ty
+        if ret_node != 0 then
+            s.ret_ty := sema_resolve_type_node(s, ret_node)
+        else
+            s.ret_ty := TYPE_VOID
+        end
+        if body != 0 then sema_check_stmt(s, body) end
+        s.ret_ty := prev_ret
+    end
+    if kind == DECL_PROC then
+        var body := load64(decl + NODE_HDR_BYTES + 24)
+        var prev_ret := s.ret_ty
+        s.ret_ty := TYPE_VOID
+        if body != 0 then sema_check_stmt(s, body) end
+        s.ret_ty := prev_ret
+    end
+end
+
+procedure sema_check_stmt(s: mut Sema, stmt: uint64) begin
+    var kind := node_kind(stmt)
+    if kind == STMT_BLOCK then
+        var stmts := load64(stmt + NODE_HDR_BYTES)
+        var count  := load32(stmt + NODE_HDR_BYTES + 8) as uint32
+        var i: uint32 := 0
+        while i < count do
+            var child := load64(stmts + (i as uint64) * 8)
+            sema_check_stmt(s, child)
+            i := i + 1
+        end
+    end
+    if kind == STMT_IF then
+        var cond := load64(stmt + NODE_HDR_BYTES)
+    sema_check_expr(s, cond)
+        var then_b := load64(stmt + NODE_HDR_BYTES + 8)
+        if then_b != 0 then sema_check_stmt(s, then_b) end
+        var else_b := load64(stmt + NODE_HDR_BYTES + 32)
+        if else_b != 0 then sema_check_stmt(s, else_b) end
+    end
+    if kind == STMT_WHILE then
+        var cond := load64(stmt + NODE_HDR_BYTES)
+    sema_check_expr(s, cond)
+        var body := load64(stmt + NODE_HDR_BYTES + 8)
+        if body != 0 then sema_check_stmt(s, body) end
+    end
+    if kind == STMT_RETURN then
+        var v := load64(stmt + NODE_HDR_BYTES)
+        if v != 0 then sema_check_expr(s, v) end
+    end
+    if kind == STMT_EXPR then
+        var expr := load64(stmt + NODE_HDR_BYTES)
+    sema_check_expr(s, expr)
+    end
+    if kind == STMT_VAR_DECL then
+        var init := load64(stmt + NODE_HDR_BYTES + 16)
+        if init != 0 then sema_check_expr(s, init) end
+    end
+    if kind == STMT_ASSIGN then
+        var lhs := load64(stmt + NODE_HDR_BYTES)
+        var rhs := load64(stmt + NODE_HDR_BYTES + 8)
+    sema_check_expr(s, lhs)
+    sema_check_expr(s, rhs)
+    end
+    if kind == STMT_LOOP then
+        var body := load64(stmt + NODE_HDR_BYTES)
+        if body != 0 then sema_check_stmt(s, body) end
+    end
+    if kind == STMT_FOR then
+        var iter := load64(stmt + NODE_HDR_BYTES + 16)
+    sema_check_expr(s, iter)
+        var body := load64(stmt + NODE_HDR_BYTES + 24)
+        if body != 0 then sema_check_stmt(s, body) end
+    end
+    if kind == STMT_MATCH then
+        var subj := load64(stmt + NODE_HDR_BYTES)
+    sema_check_expr(s, subj)
+        var arms := load64(stmt + NODE_HDR_BYTES + 8)
+        var arm_count := load32(stmt + NODE_HDR_BYTES + 16) as uint32
+        var i: uint32 := 0
+        while i < arm_count do
+            var arm := load64(arms + (i as uint64) * 8)
+            var arm_body := load64(arm + NODE_HDR_BYTES + 16)
+            if arm_body != 0 then sema_check_stmt(s, arm_body) end
+            i := i + 1
+        end
+    end
+end
+
+function sema_check_expr(s: ref Sema, expr: uint64): int32 begin
+    if expr == 0 then return TYPE_VOID end
+    var kind := node_kind(expr)
+    if kind == EXPR_INT_LIT   then return TYPE_INT64 end
+    if kind == EXPR_FLOAT_LIT then return TYPE_F64 end
+    if kind == EXPR_STRING_LIT then return TYPE_STRING end
+    if kind == EXPR_BOOL_LIT  then return TYPE_BOOL end
+    if kind == EXPR_NULL_LIT  then return TYPE_NULL end
+    if kind == EXPR_BINARY then
+        var lhs_ty := sema_check_expr(s, load64(expr + NODE_HDR_BYTES))
+        var rhs_ty := sema_check_expr(s, load64(expr + NODE_HDR_BYTES + 8))
+        var op := load32(expr + NODE_HDR_BYTES + 16)
+        if op == BINOP_EQ or op == BINOP_NE or op == BINOP_LT or
+           op == BINOP_GT or op == BINOP_LE or op == BINOP_GE or
+           op == BINOP_AND or op == BINOP_OR then
+            return TYPE_BOOL
+        end
+    rhs_ty
+        return lhs_ty
+    end
+    if kind == EXPR_CALL then
+        /* Check each argument */
+        var args := load64(expr + NODE_HDR_BYTES + 8)
+        var arg_count := load32(expr + NODE_HDR_BYTES + 16) as uint32
+        var i: uint32 := 0
+        while i < arg_count do
+            var arg := load64(args + (i as uint64) * 8)
+    sema_check_expr(s, arg)
+            i := i + 1
+        end
+        return TYPE_INT32  /* simplified: assume functions return int32 */
+    end
+    if kind == EXPR_CAST then
+        var inner := load64(expr + NODE_HDR_BYTES)
+    sema_check_expr(s, inner)
+        var ty_node := load64(expr + NODE_HDR_BYTES + 8)
+        return sema_resolve_type_node(s, ty_node)
+    end
+    if kind == EXPR_FIELD then
+        var recv := load64(expr + NODE_HDR_BYTES)
+    sema_check_expr(s, recv)
+        return TYPE_INT32
+    end
+    if kind == EXPR_INDEX then
+        var arr := load64(expr + NODE_HDR_BYTES)
+        var idx := load64(expr + NODE_HDR_BYTES + 8)
+    sema_check_expr(s, arr)
+    sema_check_expr(s, idx)
+        return TYPE_INT32
+    end
+    if kind == EXPR_GROUPED then
+        return sema_check_expr(s, load64(expr + NODE_HDR_BYTES))
+    end
+    if kind == STMT_IF then
+        /* Inline if expression */
+        var cond := load64(expr + NODE_HDR_BYTES)
+    sema_check_expr(s, cond)
+        var then_v := load64(expr + NODE_HDR_BYTES + 8)
+        var else_v := load64(expr + NODE_HDR_BYTES + 16)
+        var t := sema_check_expr(s, then_v)
+        if else_v != 0 then sema_check_expr(s, else_v) end
+        return t
+    end
+    return TYPE_INT32
+end
+
+function sema_resolve_type_node(s: ref Sema, ty_node: uint64): int32 begin
+    if ty_node == 0 then return TYPE_VOID end
+    var kind := node_kind(ty_node)
+    if kind == TYPE_NAMED then
+        var name_start := load32(ty_node + NODE_HDR_BYTES) as uint32
+        var name_len   := load32(ty_node + NODE_HDR_BYTES + 4) as uint32
+        return sema_resolve_named_type(s.src, name_start, name_len)
+    end
+    if kind == TYPE_POINTER then return TYPE_UINT64 end
+    if kind == TYPE_OPTIONAL then return TYPE_UINT64 end
+    if kind == TYPE_ARRAY    then return TYPE_UINT64 end
+    if kind == TYPE_SLICE    then return TYPE_UINT64 end
+    if kind == TYPE_FUNC     then return TYPE_UINT64 end
+    if kind == TYPE_OWNED then
+        var inner := load64(ty_node + NODE_HDR_BYTES + 8)
+        return sema_resolve_type_node(s, inner)
+    end
+    return TYPE_INT32
+end
+
+function sema_has_errors(s: ref Sema): bool begin
+    return s.diag_count > 0
+end

@@ -1,0 +1,17 @@
+/// Maia self-hosted compiler — riscv64 code generator stub.
+
+module Codegen_RISCV64
+
+use IR
+
+extern function maia_mmap(len: uint64): uint64
+
+type RISCV64Result = struct {
+    text_ptr: uint64,
+    text_len: uint32,
+}
+
+function riscv64_generate(mod_ptr: uint64): RISCV64Result begin
+    mod_ptr
+    return RISCV64Result { .text_ptr = maia_mmap(0), .text_len = 0 }
+end
