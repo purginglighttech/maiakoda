@@ -3,11 +3,11 @@
 Document Information
 
 Property Value
-<p />Version 0.0.2
-<p />Status Pre-alpha
-<p />Date 2026-05-02
-<p />Copyright © 2026 Purging Light Technologies
-<p />License MIT
+- Version 0.0.2
+- Status Pre-alpha
+- Date 2026-05-02
+- Copyright © 2026 Purging Light Technologies
+- License MIT
 
 ---
 
@@ -36,11 +36,11 @@ Maia is a compiled systems language for bare-metal and performance-critical code
 Key Characteristics:
 
 Property Value
-Compilation Ahead-of-time (AOT) to native code
-Memory Management No GC — compile-time reference counting + ownership
-Concurrency Actors + channels + Pony-style reference capabilities
-Safety Borrow checker + reference capabilities + explicit allocators
-Backends x86_64, ARM64, RISC-V, WebAssembly
+- Compilation Ahead-of-time (AOT) to native code
+- Memory Management No GC — compile-time reference counting + ownership
+- Concurrency Actors + channels + Pony-style reference capabilities
+- Safety Borrow checker + reference capabilities + explicit allocators
+- Backends x86_64, ARM64, RISC-V, WebAssembly
 
 What you can build with Maia:
 
@@ -58,11 +58,11 @@ Koda is an interpreted scripting language that runs everywhere Maia runs.
 Key Characteristics:
 
 Property Value
-Execution Bytecode VM (implemented in Maia)
-Memory Management Reference counting
-Concurrency Async/await + task spawning
-Typing Dynamic with optional static (gradual typing)
-Primary Uses Embedded scripting, shell, build automation, web
+- Execution Bytecode VM (implemented in Maia)
+- Memory Management Reference counting
+- Concurrency Async/await + task spawning
+- Typing Dynamic with optional static (gradual typing)
+- Primary Uses Embedded scripting, shell, build automation, web
 
 What you can build with Koda:
 
@@ -98,15 +98,15 @@ end
 Syntax Highlights:
 
 Feature Syntax
-Blocks begin ... end
-Comments /* ... */ (regular), /// ... (documentation)
-Variables var name: type = value
-Constants const name: type = value
-Functions function name(params): return_type
-Procedures procedure name(params)
-If statement if condition then ... elsif ... else ... end
-Loops for i in 0..9 do ... end
-Match match value { pattern => block }
+- Blocks begin ... end
+- Comments /* ... */ (regular), /// ... (documentation)
+- Variables var name: type = value
+- Constants const name: type = value
+- Functions function name(params): return_type
+- Procedures procedure name(params)
+- If statement if condition then ... elsif ... else ... end
+- Loops for i in 0..9 do ... end
+- Match match value { pattern => block }
 
 ---
 
@@ -257,13 +257,13 @@ Part 7: Cross-Language FFI
 Maia provides built-in FFI to 7 languages with zero-copy where possible.
 
 Language Keyword Overhead
-C extern "C" Zero
-C++ extern "C++" Minimal
-Rust extern "Rust" Minimal
-Zig extern "Zig" Zero
-Pony extern "Pony" Minimal
-Java extern "Java" Moderate (JNI)
-Python extern "Python" Moderate
+- C extern "C" Zero
+- C++ extern "C++" Minimal
+- Rust extern "Rust" Minimal
+- Zig extern "Zig" Zero
+- Pony extern "Pony" Minimal
+- Java extern "Java" Moderate (JNI)
+- Python extern "Python" Moderate
 
 ```pascal
 /* Example: Calling Python from Maia */
@@ -280,21 +280,21 @@ Part 8: Platform Support
 8.1 Tier 1 Platforms
 
 Platform Minimum Version Architectures
-Linux Kernel 6.12 x86_64, ARM64, RISC-V
-Windows Windows 10 (1607+) x86_64, ARM64
-macOS 11 (Big Sur) x86_64, ARM64
-FreeBSD 13.0 x86_64, ARM64, RISC-V
-OpenBSD 7.0 x86_64, ARM64
-NetBSD 10.0 x86_64, ARM64, RISC-V
-DragonFlyBSD 6.0 x86_64
+- Linux Kernel 6.12 x86_64, ARM64, RISC-V
+- Windows Windows 10 (1607+) x86_64, ARM64
+- macOS 11 (Big Sur) x86_64, ARM64
+- FreeBSD 13.0 x86_64, ARM64, RISC-V
+- OpenBSD 7.0 x86_64, ARM64
+- NetBSD 10.0 x86_64, ARM64, RISC-V
+- DragonFlyBSD 6.0 x86_64
 
 8.2 Backends
 
 Architecture Status Output Formats
-x86_64 ✅ Stable ELF, Mach-O, PE
-ARM64 ✅ Stable ELF, Mach-O, PE
-RISC-V ✅ Stable ELF
-WebAssembly ✅ Stable WASM
+- x86_64 ✅ Stable ELF, Mach-O, PE
+- ARM64 ✅ Stable ELF, Mach-O, PE
+- RISC-V ✅ Stable ELF
+- WebAssembly ✅ Stable WASM
 
 No LLVM dependency — Maia has its own native code generation.
 
@@ -350,35 +350,35 @@ Part 10: Performance Targets
 10.1 Compile Time
 
 Codebase Target
-Hello World < 50ms
-Math Library (500 LOC) < 500ms
-TOML Config Loader < 100ms
-Full Compiler (50K LOC) < 30s
+- Hello World < 50ms
+- Math Library (500 LOC) < 500ms
+- TOML Config Loader < 100ms
+- Full Compiler (50K LOC) < 30s
 
 10.2 Runtime Performance
 
 Operation Target (ns)
-Function call < 2ns
-Integer add < 1ns
-Float add < 2ns
-Memory alloc (arena) < 50ns
-Channel send < 100ns
-Actor message < 200ns
+- Function call < 2ns
+- Integer add < 1ns
+- Float add < 2ns
+- Memory alloc (arena) < 50ns
+- Channel send < 100ns
+- Actor message < 200ns
 
 10.3 TOML Parsing (Default Format)
 
 File Size Parse Time
-1KB < 10µs
-10KB < 50µs
-100KB < 500µs
-1MB < 5ms
+- 1KB < 10µs
+- 10KB < 50µs
+- 100KB < 500µs
+- 1MB < 5ms
 
 10.4 Concurrency
 
 Metric Target
-Actor throughput > 5M msg/s
-Parallel speedup (8 cores) > 6x
-Channel contention < 1µs
+- Actor throughput > 5M msg/s
+- Parallel speedup (8 cores) > 6x
+- Channel contention < 1µs
 
 ---
 
