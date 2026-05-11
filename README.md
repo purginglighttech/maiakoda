@@ -221,7 +221,7 @@ Part 6: Safety Features
 6.1 Safety Levels
 
 | Level | Bounds | Overflow | Use-After-Free | Leak Detection | Overhead |
-  -----   ------   --------   --------------   --------------   --------
+| ----- | :----: | :------: | :------------: | :------------: | :------: |
 | full | ✅ | ✅ | ✅ | ✅ | +20-30% |
 | release | ✅ | ✅ | ❌ | ❌ | +5-10% |
 | os | ✅ | ❌ | ❌ | ❌ | +2-5% |
@@ -281,19 +281,20 @@ Part 8: Platform Support
 
 8.1 Tier 1 Platforms
 
-Platform Minimum Version Architectures
-- Linux Kernel 6.12 x86_64, ARM64, RISC-V
-- Windows Windows 10 (1607+) x86_64, ARM64
-- macOS 11 (Big Sur) x86_64, ARM64
-- FreeBSD 13.0 x86_64, ARM64, RISC-V
-- OpenBSD 7.0 x86_64, ARM64
-- NetBSD 10.0 x86_64, ARM64, RISC-V
-- DragonFlyBSD 6.0 x86_64
+| Platform | Minimum Version | Architectures |
+| -------- | --------------- | ------------- |
+| Linux Kernel | 6.12 | x86_64, ARM64, RISC-V |
+| Windows Windows | 10 (1607+) | x86_64, ARM64 |
+| macOS | 11 (Big Sur) | x86_64, ARM64 |
+| FreeBSD | 13.0 | x86_64, ARM64, RISC-V |
+| OpenBSD | 7.0 | x86_64, ARM64 |
+| NetBSD | 10.0 | x86_64, ARM64, RISC-V |
+| DragonFlyBSD | 6.0 | x86_64 |
 
 8.2 Backends
 
 | Architecture | Status | Output Formats |
-  ------------   ------   --------------
+| ------------ | :----: | -------------- |
 | x86_64 | ✅ | Stable ELF, Mach-O, PE |
 | ARM64 | ✅ | Stable ELF, Mach-O, PE |
 | RISC-V | ✅ | Stable ELF |
@@ -426,7 +427,7 @@ shell = true
 ```
 
 | Language | Embedded | Shell | No GC | Memory Safety | Concurrency |
-  --------   --------   -----   -----   -------------   -----------
+| -------- | :------: | :---: | :---: | :-----------: | ----------- |
 | Maia | ❌ | ❌ | ✅ | Multi-layer Actors |
 | Koda | ✅ | ✅ | ❌ | Reference counting Async/await |
 | Rust | ❌ | ❌ | ✅ | Borrow checker Threads |
