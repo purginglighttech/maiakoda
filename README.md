@@ -3,11 +3,11 @@
 Document Information
 
 Property Value
-Version 0.0.2
-Status Pre-alpha
-Date 2026-05-02
-Copyright © 2026 Purging Light Technologies
-License MIT
+<p />Version 0.0.2
+<p />Status Pre-alpha
+<p />Date 2026-05-02
+<p />Copyright © 2026 Purging Light Technologies
+<p />License MIT
 
 ---
 
