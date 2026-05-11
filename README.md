@@ -142,12 +142,13 @@ defer arena.deinit()                /* all memory freed at once */
 
 4.4 Reference Capabilities (Pony-style)
 
-Capability Mutable Shareable Sendable Use Case
-iso ✅ ❌ ✅ Unique ownership across actors
-val ❌ ✅ ✅ Immutable shared data
-tag ❌ ✅ ✅ Actor reference (messages only)
-ref ✅ ✅ ❌ Local mutable (single thread)
-box ❌ ✅ ✅ Read-only view
+| Capability | Mutable | Shareable | Sendable | Use Case |
+  ----------   -------   ---------   --------   --------
+| iso | ✅ | ❌ | ✅ | Unique ownership across actors |
+| val | ❌ | ✅ | ✅ | Immutable shared data |
+| tag | ❌ | ✅ | ✅ | Actor reference (messages only) |
+| ref | ✅ | ✅ | ❌ | Local mutable (single thread) |
+| box | ❌ | ✅ | ✅ | Read-only view |
 
 ---
 
@@ -219,11 +220,12 @@ Part 6: Safety Features
 
 6.1 Safety Levels
 
-Level Bounds Overflow Use-After-Free Leak Detection Overhead
-full ✅ ✅ ✅ ✅ +20-30%
-release ✅ ✅ ❌ ❌ +5-10%
-os ✅ ❌ ❌ ❌ +2-5%
-none ❌ ❌ ❌ ❌ 0%
+| Level | Bounds | Overflow | Use-After-Free | Leak Detection | Overhead |
+  -----   ------   --------   --------------   --------------   --------
+| full | ✅ | ✅ | ✅ | ✅ | +20-30% |
+| release | ✅ | ✅ | ❌ | ❌ | +5-10% |
+| os | ✅ | ❌ | ❌ | ❌ | +2-5% |
+| none | ❌ | ❌ | ❌ | ❌ | 0% |
 
 6.2 Safe/Unsafe Blocks
 
@@ -290,11 +292,12 @@ Platform Minimum Version Architectures
 
 8.2 Backends
 
-Architecture Status Output Formats
-- x86_64 ✅ Stable ELF, Mach-O, PE
-- ARM64 ✅ Stable ELF, Mach-O, PE
-- RISC-V ✅ Stable ELF
-- WebAssembly ✅ Stable WASM
+| Architecture | Status | Output Formats |
+  ------------   ------   --------------
+| x86_64 | ✅ | Stable ELF, Mach-O, PE |
+| ARM64 | ✅ | Stable ELF, Mach-O, PE |
+| RISC-V | ✅ | Stable ELF |
+| WebAssembly | ✅ | Stable WASM |
 
 No LLVM dependency — Maia has its own native code generation.
 
@@ -422,13 +425,14 @@ embedded = false
 shell = true
 ```
 
-Language Embedded Shell No GC Memory Safety Concurrency
-Maia ❌ ❌ ✅ Multi-layer Actors
-Koda ✅ ✅ ❌ Reference counting Async/await
-Rust ❌ ❌ ✅ Borrow checker Threads
-Lua ✅ ❌ ❌ GC Coroutines
-Bash ❌ ✅ ✅ None Processes
-Python ❌ ❌ ❌ GC Async/threads
+| Language | Embedded | Shell | No GC | Memory Safety | Concurrency |
+  --------   --------   -----   -----   -------------   -----------
+| Maia | ❌ | ❌ | ✅ | Multi-layer Actors |
+| Koda | ✅ | ✅ | ❌ | Reference counting Async/await |
+| Rust | ❌ | ❌ | ✅ | Borrow checker Threads |
+| Lua | ✅ | ❌ | ❌ | GC Coroutines |
+| Bash | ❌ | ✅ | ✅ | None Processes |
+| Python | ❌ | ❌ | ❌ | GC Async/threads |
 
 Koda occupies a unique position — it is the only language that is both a first-class embedded scripting language AND a first-class standalone shell language.
 
