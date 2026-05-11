@@ -10,7 +10,7 @@ Property Value
 - License MIT
 
 ---
-*** Important Note :: MaiaKoda has been built with the assistance of DeepSeek and Claude Code. ***
+***Important Note :: MaiaKoda has been built with the assistance of DeepSeek and Claude Code.***
 
 Part 1: What is MaiaKoda?
 
