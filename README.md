@@ -143,7 +143,7 @@ defer arena.deinit()                /* all memory freed at once */
 4.4 Reference Capabilities (Pony-style)
 
 | Capability | Mutable | Shareable | Sendable | Use Case |
-| ---------- | ------- | --------- | -------- | -------- |
+| ---------- | :-----: | :-------: | :------: | -------- |
 | iso | ✅ | ❌ | ✅ | Unique ownership across actors |
 | val | ❌ | ✅ | ✅ | Immutable shared data |
 | tag | ❌ | ✅ | ✅ | Actor reference (messages only) |
