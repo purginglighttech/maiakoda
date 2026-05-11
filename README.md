@@ -44,12 +44,12 @@ Property Value
 
 What you can build with Maia:
 
-· Operating system kernels
-· Device drivers
-· Embedded firmware
-· Game engines
-· Real-time systems
-· Performance-critical services
+- Operating system kernels
+- Device drivers
+- Embedded firmware
+- Game engines
+- Real-time systems
+- Performance-critical services
 
 2.2 Koda — The Scripting Language
 
@@ -66,12 +66,12 @@ Property Value
 
 What you can build with Koda:
 
-· Embedded configuration scripts
-· Interactive shells (pssh)
-· Build systems
-· Web applications (first-class web framework)
-· Documentation readers (doobie)
-· Modal editors (loki)
+ - Embedded configuration scripts
+ - Interactive shells (pssh)
+ - Build systems
+ - Web applications (first-class web framework)
+ - Documentation readers (doobie)
+ - Modal editors (loki)
 
 ---
 
