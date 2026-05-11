@@ -258,14 +258,15 @@ Part 7: Cross-Language FFI
 
 Maia provides built-in FFI to 7 languages with zero-copy where possible.
 
-Language Keyword Overhead
-- C extern "C" Zero
-- C++ extern "C++" Minimal
-- Rust extern "Rust" Minimal
-- Zig extern "Zig" Zero
-- Pony extern "Pony" Minimal
-- Java extern "Java" Moderate (JNI)
-- Python extern "Python" Moderate
+| Language | Keyword | Overhead |
+| -------- | ------- | -------- |
+| C | extern "C" | Zero |
+| C++ | extern "C++" | Minimal |
+| Rust | extern "Rust" | Minimal |
+| Zig | extern "Zig" | Zero |
+| Pony | extern "Pony" | Minimal |
+| Java | extern "Java" | Moderate (JNI) |
+| Python | extern "Python" | Moderate |
 
 ```pascal
 /* Example: Calling Python from Maia */
