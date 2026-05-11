@@ -6,7 +6,7 @@ Property Value
 - Version 0.0.2
 - Status Pre-alpha
 - Date 2026-05-02
-- Copyright © 2026 Purging Light Technologies
+- Copyright © 2026 Purging Light Technologies and Contributors
 - License MIT
 
 ---
